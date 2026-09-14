@@ -11,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -24,19 +24,28 @@ jobs:
           pip install -r requirements.txt
 
       - name: Step 1 - Scan Stocks
+        env:
+          PYTHONPATH: .
         run: python src/scanner.py
 
       - name: Step 2 - Find Entry & SL
+        env:
+          PYTHONPATH: .
         run: python src/signals.py
 
       - name: Step 3 - Process Weekly Setups
+        env:
+          PYTHONPATH: .
         run: python src/weekly_analyzer.py
 
       - name: Step 4 - Track Trade Outcomes
+        env:
+          PYTHONPATH: .
         run: python src/trade_tracker.py
 
       - name: Step 5 - Send Telegram Summary
         env:
+          PYTHONPATH: .
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
         run: python src/telegram_notifier.py
