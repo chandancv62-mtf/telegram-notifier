@@ -1,29 +1,45 @@
 import os
+import datetime
 import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
-import config
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
-def process_exact_bd_bu_lowest_low():
-    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    input_path = os.path.join(script_dir, config.ENTRY_SL_SIGNALS_PATH)
-    output_path = os.path.join(script_dir, config.WEEKLY_SIGNALS_PATH)
+def process_exact_bd_bu_lowest_low(input_file='entry_sl_signals.xlsx', output_file='weekly_final_trading_signals.xlsx'):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_path = os.path.join(script_dir, input_file)
+    output_path = os.path.join(script_dir, output_file)
+
+    today = datetime.datetime.now()
+    monday_start = (today - datetime.timedelta(days=today.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday_end = monday_start + datetime.timedelta(days=6, hours=23, minutes=59)
+
+    # RULE: नया हफ़्ता (Monday) शुरू होते ही पुरानी फ़ाइल को पूरी तरह हटा दें
+    if today.weekday() == 0 and os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+            print("🧹 New Week Started (Monday): Previous week file deleted successfully.")
+        except Exception as e:
+            print(f"⚠️ Failed to remove old file: {e}")
 
     try:
         df_signals = pd.read_excel(input_path)
         if df_signals.empty:
-            print("Input file empty hai.")
+            print("❌ Input file empty hai.")
             return
         symbols = df_signals['Ticker'].dropna().unique().tolist()
     except Exception as e:
-        print(f"Error reading file: {e}")
+        print(f"❌ Error reading file: {e}")
         return
 
     all_master_results = []
     valid_results = []
     invalid_results = []
 
-    for symbol in tqdm(symbols, desc="Processing Weekly Setups", unit="stock"):
+    print(f"\n🚀 Scanning Fresh Setups for Current Week ({monday_start.strftime('%Y-%m-%d')} to {sunday_end.strftime('%Y-%m-%d')})...\n")
+
+    for symbol in tqdm(symbols, desc="Processing Stocks", unit="stock"):
         try:
             stock_name = str(symbol).strip()
             ticker_symbol = stock_name if (stock_name.endswith('.NS') or stock_name.endswith('.BO')) else stock_name + '.NS'
@@ -32,28 +48,30 @@ def process_exact_bd_bu_lowest_low():
             pwl = float(symbol_row['PWL'])
 
             ticker = yf.Ticker(ticker_symbol)
+            # Fetch 5 days intraday data
             df_15m = ticker.history(period="5d", interval="15m")
 
             if df_15m.empty:
-                res = {'Ticker': stock_name, 'PWL': pwl, 'Status': 'INVALID', 'Reason': 'No Intraday Data'}
-                invalid_results.append(res)
-                all_master_results.append(res)
                 continue
 
             if df_15m.index.tz is not None:
                 df_15m.index = df_15m.index.tz_localize(None)
 
-            df_15m = df_15m.between_time(config.MARKET_START_TIME, config.MARKET_END_TIME)
+            # Strictly Filter CURRENT WEEK Intraday Data Only (Mon-Sun)
+            df_15m = df_15m[(df_15m.index >= monday_start) & (df_15m.index <= sunday_end)]
+            df_15m = df_15m.between_time('09:15', '15:15')
 
+            if df_15m.empty:
+                continue
+
+            # Step 1: BD Candle
             bd_candles = df_15m[df_15m['Low'] < pwl]
             if bd_candles.empty:
-                res = {'Ticker': stock_name, 'PWL': pwl, 'Status': 'INVALID', 'Reason': 'No BD candle below PWL'}
-                invalid_results.append(res)
-                all_master_results.append(res)
                 continue
 
             first_bd_candle = bd_candles.iloc[0]
 
+            # Step 2: BU Candle
             bu_candidates = df_15m[
                 (df_15m['Low'] < pwl) & 
                 (df_15m['Close'] > pwl) & 
@@ -61,17 +79,17 @@ def process_exact_bd_bu_lowest_low():
             ]
 
             if bu_candidates.empty:
-                res = {'Ticker': stock_name, 'PWL': pwl, 'Status': 'INVALID', 'Reason': 'BD Candle found, but no BU candle close > PWL'}
-                invalid_results.append(res)
-                all_master_results.append(res)
                 continue
 
             last_bu_candle = bu_candidates.iloc[-1]
+
+            # Step 3: SL Calculation
             bd_bu_range = df_15m.loc[first_bd_candle.name:last_bu_candle.name]
             sl_candle = bd_bu_range.loc[bd_bu_range['Low'].idxmin()]
             lowest_sl_point = round(float(sl_candle['Low']), 2)
             lowest_sl_time = sl_candle.name.strftime('%Y-%m-%d %H:%M')
 
+            # Step 4: Entry Calculation
             sl_idx = df_15m.index.get_loc(sl_candle.name)
             swing_high_found = False
             entry_point = None
@@ -80,6 +98,7 @@ def process_exact_bd_bu_lowest_low():
             for i in range(sl_idx - 1, 0, -1):
                 if i - 1 < 0 or i + 1 >= len(df_15m):
                     continue
+
                 left_high = df_15m.iloc[i - 1]['High']
                 middle_high = df_15m.iloc[i]['High']
                 right_high = df_15m.iloc[i + 1]['High']
@@ -106,8 +125,8 @@ def process_exact_bd_bu_lowest_low():
             sl_pct = round((risk / entry_point) * 100, 2)
             sl_pct_with_points = f"{sl_pct}% ({risk})"
 
-            target_1_1 = round(entry_point + (config.RISK_REWARD_RATIOS[0] * risk), 2)
-            target_1_2 = round(entry_point + (config.RISK_REWARD_RATIOS[1] * risk), 2)
+            target_1_1 = round(entry_point + (1 * risk), 2)
+            target_1_2 = round(entry_point + (2 * risk), 2)
 
             res = {
                 'Ticker': stock_name,
@@ -129,17 +148,14 @@ def process_exact_bd_bu_lowest_low():
             all_master_results.append(res)
 
         except Exception as e:
-            res = {'Ticker': stock_name, 'PWL': pwl if 'pwl' in locals() else None, 'Status': 'ERROR', 'Reason': str(e)}
-            invalid_results.append(res)
-            all_master_results.append(res)
+            continue
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+    with pd.ExcelWriter(output_path, engine='openpyxl', mode='w') as writer:
         pd.DataFrame(all_master_results).to_excel(writer, sheet_name='All_Stocks_Master', index=False)
         pd.DataFrame(valid_results).to_excel(writer, sheet_name='Valid_Setups_Only', index=False)
         pd.DataFrame(invalid_results).to_excel(writer, sheet_name='Invalid_Setups_Only', index=False)
 
-    print(f"\nCreated Excel with Targets & SL saved to '{output_path}'.")
+    print(f"\n✅ Fresh Current Week File Generated: '{output_file}'")
 
 if __name__ == "__main__":
     process_exact_bd_bu_lowest_low()
