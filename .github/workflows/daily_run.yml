@@ -4,7 +4,7 @@ on:
   schedule:
     # सोमवार से शुक्रवार शाम 3:30 बजे (IST) ऑटोमैटिक चलेगा
     - cron: '0 10 * * 1-5'
-  workflow_dispatch: # GitHub वेबसाइट पर "Run workflow" बटन से चलाने के लिए
+  workflow_dispatch: # GitHub वेबसाइट से manually चलाने के लिए
 
 jobs:
   run-bot:
