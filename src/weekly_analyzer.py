@@ -3,19 +3,23 @@ import datetime
 import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
 
-def process_exact_bd_bu_lowest_low(input_file='entry_sl_signals.xlsx', output_file='weekly_final_trading_signals.xlsx'):
+def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file='weekly_final_trading_signals.xlsx'):
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Try finding files in root or data directory
     input_path = os.path.join(script_dir, input_file)
+    if not os.path.exists(input_path):
+        input_path = os.path.join(script_dir, 'data', input_file)
+    if not os.path.exists(input_path):
+        input_path = os.path.join(script_dir, 'entry_sl_signals.xlsx')
+
     output_path = os.path.join(script_dir, output_file)
 
     today = datetime.datetime.now()
     monday_start = (today - datetime.timedelta(days=today.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday_end = monday_start + datetime.timedelta(days=6, hours=23, minutes=59)
 
-    # RULE: नया हफ़्ता (Monday) शुरू होते ही पुरानी फ़ाइल को पूरी तरह हटा दें
     if today.weekday() == 0 and os.path.exists(output_path):
         try:
             os.remove(output_path)
@@ -24,7 +28,11 @@ def process_exact_bd_bu_lowest_low(input_file='entry_sl_signals.xlsx', output_fi
             print(f"⚠️ Failed to remove old file: {e}")
 
     try:
-        df_signals = pd.read_excel(input_path)
+        if input_path.endswith('.csv'):
+            df_signals = pd.read_csv(input_path)
+        else:
+            df_signals = pd.read_excel(input_path)
+            
         if df_signals.empty:
             print("❌ Input file empty hai.")
             return
@@ -45,10 +53,9 @@ def process_exact_bd_bu_lowest_low(input_file='entry_sl_signals.xlsx', output_fi
             ticker_symbol = stock_name if (stock_name.endswith('.NS') or stock_name.endswith('.BO')) else stock_name + '.NS'
 
             symbol_row = df_signals[df_signals['Ticker'] == symbol].iloc[-1]
-            pwl = float(symbol_row['PWL'])
+            pwl = float(symbol_row['Prev_Week_Low']) if 'Prev_Week_Low' in symbol_row else float(symbol_row['PWL'])
 
             ticker = yf.Ticker(ticker_symbol)
-            # Fetch 5 days intraday data
             df_15m = ticker.history(period="5d", interval="15m")
 
             if df_15m.empty:
@@ -57,7 +64,6 @@ def process_exact_bd_bu_lowest_low(input_file='entry_sl_signals.xlsx', output_fi
             if df_15m.index.tz is not None:
                 df_15m.index = df_15m.index.tz_localize(None)
 
-            # Strictly Filter CURRENT WEEK Intraday Data Only (Mon-Sun)
             df_15m = df_15m[(df_15m.index >= monday_start) & (df_15m.index <= sunday_end)]
             df_15m = df_15m.between_time('09:15', '15:15')
 
@@ -147,7 +153,7 @@ def process_exact_bd_bu_lowest_low(input_file='entry_sl_signals.xlsx', output_fi
             valid_results.append(res)
             all_master_results.append(res)
 
-        except Exception as e:
+        except Exception:
             continue
 
     with pd.ExcelWriter(output_path, engine='openpyxl', mode='w') as writer:
