@@ -2,16 +2,20 @@ import os
 import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
-import config
 
-def run_scanner():
-    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    input_path = os.path.join(script_dir, config.STOCKS_CSV_PATH)
-    output_path = os.path.join(script_dir, config.FILTERED_STOCKS_PATH)
+def run_scanner(input_file='stocks.csv', output_file='filtered_stocks.csv'):
+    # Get the directory where this script is saved
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Construct full absolute paths for input and output files
+    input_path = os.path.join(script_dir, input_file)
+    output_path = os.path.join(script_dir, output_file)
 
+    # 1. Read stocks list from CSV
     try:
         df_stocks = pd.read_csv(input_path)
-        symbols = df_stocks[df_stocks.columns[0]].dropna().tolist()
+        col_name = df_stocks.columns[0]
+        symbols = df_stocks[col_name].dropna().tolist()
         print(f"Loaded {len(symbols)} stocks from '{input_path}'.\n")
     except Exception as e:
         print(f"Error reading {input_path}: {e}")
@@ -19,6 +23,7 @@ def run_scanner():
 
     filtered_results = []
 
+    # 2. Loop through each stock with progress bar (tqdm)
     for symbol in tqdm(symbols, desc="Scanning Stocks", unit="stock"):
         try:
             ticker_symbol = str(symbol).strip()
@@ -31,19 +36,27 @@ def run_scanner():
             if df_daily.empty or len(df_daily) < 10:
                 continue
 
+            # Resample daily data to weekly
             df_weekly = df_daily.resample('W-FRI').agg({
-                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last'
             }).dropna()
 
             if len(df_weekly) < 2:
                 continue
 
+            # Previous week low
             prev_week_low = df_weekly.iloc[-2]['Low']
+
+            # Latest daily candle
             latest_daily = df_daily.iloc[-1]
             latest_date = df_daily.index[-1].strftime('%Y-%m-%d')
             daily_low = latest_daily['Low']
             daily_close = latest_daily['Close']
 
+            # Condition: Low broke Previous Week's Low, but Close is ABOVE it
             if daily_low < prev_week_low and daily_close > prev_week_low:
                 filtered_results.append({
                     'Ticker': symbol,
@@ -52,14 +65,49 @@ def run_scanner():
                     'Daily_Close': round(daily_close, 2),
                     'Prev_Week_Low': round(prev_week_low, 2)
                 })
+                # Print match without breaking the progress bar
+                tqdm.write(f" -> [MATCH] {symbol} | Low: {round(daily_low, 2)} < PWL: {round(prev_week_low, 2)} | Close: {round(daily_close, 2)} > PWL")
 
         except Exception as e:
-            print(f"Error scanning {symbol}: {e}")
+            tqdm.write(f"Error scanning {symbol}: {e}")
 
-    df_results = pd.DataFrame(filtered_results)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    df_results.to_csv(output_path, index=False)
-    print(f"\nScan completed! {len(df_results)} stock(s) matched.")
+    # 3. Save results to CSV file with append, deduplication, and weekly cleanup
+    if filtered_results:
+        df_new = pd.DataFrame(filtered_results)
+
+        # 1. No Overwrite: Existing data read karke append karein
+        if os.path.exists(output_path):
+            try:
+                df_existing = pd.read_csv(output_path)
+                df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+            except Exception as e:
+                tqdm.write(f"Error reading existing file, starting fresh: {e}")
+                df_combined = df_new
+        else:
+            df_combined = df_new
+
+        # 2. No Duplicate Entry: Fetch kiye huye saare columns par duplicate match check karein
+        df_combined = df_combined.drop_duplicates()
+
+        # 3. Current Week Only: Dynamic Monday to Sunday filter
+        df_combined['Date_dt'] = pd.to_datetime(df_combined['Date'])
+        
+        today = pd.Timestamp.now().normalize()
+        start_of_week = today - pd.Timedelta(days=today.weekday())  # Current Monday
+        end_of_week = start_of_week + pd.Timedelta(days=6)           # Current Sunday
+
+        df_weekly_only = df_combined[
+            (df_combined['Date_dt'] >= start_of_week) & 
+            (df_combined['Date_dt'] <= end_of_week)
+        ].copy()
+
+        df_weekly_only = df_weekly_only.drop(columns=['Date_dt'])
+
+        # Final filtered file save karein
+        df_weekly_only.to_csv(output_path, index=False)
+        print(f"\nScan completed! {len(df_weekly_only)} stock(s) from current week saved in '{output_path}'.")
+    else:
+        print("\nScan completed! No new stocks met the condition today.")
 
 if __name__ == "__main__":
     run_scanner()
