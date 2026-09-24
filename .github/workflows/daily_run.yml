@@ -2,9 +2,9 @@ name: Run Telegram Trading Bot
 
 on:
   schedule:
-    # सोमवार से शुक्रवार शाम 3:30 बजे (IST) ऑटोमैटिक चलेगा
-    - cron: '0 10 * * 1-5'
-  workflow_dispatch: # GitHub वेबसाइट से manually चलाने के लिए
+    # Somwar se Shukrawar shaam 4:00 baje IST par chalega (10:30 AM UTC = 4:00 PM IST)
+    - cron: '30 10 * * 1-5'
+  workflow_dispatch: # GitHub website se manually chalane ke liye
 
 jobs:
   run-bot:
@@ -23,11 +23,13 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Run Trading Scripts
+      - name: Run Trading Scripts in Order
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
         run: |
+          python src/scanner.py
+          python src/signals.py
           python src/weekly_analyzer.py
           python src/trade_tracker.py
           python src/telegram_notifier.py
