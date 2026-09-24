@@ -6,15 +6,19 @@ from tqdm import tqdm
 
 def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file='weekly_final_trading_signals.xlsx'):
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
     
-    # Try finding files in root or data directory
-    input_path = os.path.join(script_dir, input_file)
+    # Path resolution for input file (check root, data/ dir, and script_dir)
+    input_path = os.path.join(project_root, 'data', input_file)
     if not os.path.exists(input_path):
-        input_path = os.path.join(script_dir, 'data', input_file)
+        input_path = os.path.join(project_root, input_file)
     if not os.path.exists(input_path):
-        input_path = os.path.join(script_dir, 'entry_sl_signals.xlsx')
+        input_path = os.path.join(project_root, 'data', 'entry_sl_signals.xlsx')
 
-    output_path = os.path.join(script_dir, output_file)
+    # Save output strictly inside data/ directory
+    data_dir = os.path.join(project_root, 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    output_path = os.path.join(data_dir, os.path.basename(output_file))
 
     today = datetime.datetime.now()
     monday_start = (today - datetime.timedelta(days=today.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -161,7 +165,7 @@ def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file
         pd.DataFrame(valid_results).to_excel(writer, sheet_name='Valid_Setups_Only', index=False)
         pd.DataFrame(invalid_results).to_excel(writer, sheet_name='Invalid_Setups_Only', index=False)
 
-    print(f"\n✅ Fresh Current Week File Generated: '{output_file}'")
+    print(f"\n✅ Fresh Current Week File Generated in Data Folder: '{output_path}'")
 
 if __name__ == "__main__":
     process_exact_bd_bu_lowest_low()
