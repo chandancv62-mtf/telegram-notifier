@@ -1,59 +1,41 @@
-name: Daily Stock Trading Pipeline
+name: Run Telegram Trading Bot
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '15 10 * * 1-5'
+    # सोमवार से शुक्रवार शाम 3:30 बजे (IST) ऑटोमैटिक चलेगा
+    - cron: '0 10 * * 1-5'
+  workflow_dispatch: # GitHub वेबसाइट पर "Run workflow" बटन से चलाने के लिए
 
 jobs:
-  run-pipeline:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Check out Repository
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Step 1 - Scan Stocks
+      - name: Run Trading Scripts
         env:
-          PYTHONPATH: .
-        run: python src/scanner.py
-
-      - name: Step 2 - Find Entry & SL
-        env:
-          PYTHONPATH: .
-        run: python src/signals.py
-
-      - name: Step 3 - Process Weekly Setups
-        env:
-          PYTHONPATH: .
-        run: python src/weekly_analyzer.py
-
-      - name: Step 4 - Track Trade Outcomes
-        env:
-          PYTHONPATH: .
-        run: python src/trade_tracker.py
-
-      - name: Step 5 - Send Telegram Summary
-        env:
-          PYTHONPATH: .
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
-        run: python src/telegram_notifier.py
+        run: |
+          python src/weekly_analyzer.py
+          python src/trade_tracker.py
+          python src/telegram_notifier.py
 
-      - name: Commit and Push Updated Results
+      - name: Commit and Push Updated Excel & CSV Files
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add data/
-          git commit -m "Auto-update trading results [skip ci]" || echo "No changes to commit"
+          git add -A
+          git commit -m "Auto-update trading results and signals [skip ci]" || exit 0
           git push
