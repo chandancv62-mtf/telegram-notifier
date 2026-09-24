@@ -3,13 +3,16 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 
-def run_scanner(input_file='stocks.csv', output_file='filtered_stocks.csv'):
-    # Get the directory where this script is saved
+def run_scanner(input_file='data/stocks.csv', output_file='data/filtered_stocks.csv'):
+    # Get current script directory (src/)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Construct full absolute paths for input and output files
-    input_path = os.path.join(script_dir, input_file)
-    output_path = os.path.join(script_dir, output_file)
+    # Get project root directory (one level up from src/)
+    project_root = os.path.dirname(script_dir)
+    
+    # Construct full absolute paths relative to project root
+    input_path = os.path.join(project_root, input_file)
+    output_path = os.path.join(project_root, output_file)
 
     # 1. Read stocks list from CSV
     try:
@@ -65,7 +68,6 @@ def run_scanner(input_file='stocks.csv', output_file='filtered_stocks.csv'):
                     'Daily_Close': round(daily_close, 2),
                     'Prev_Week_Low': round(prev_week_low, 2)
                 })
-                # Print match without breaking the progress bar
                 tqdm.write(f" -> [MATCH] {symbol} | Low: {round(daily_low, 2)} < PWL: {round(prev_week_low, 2)} | Close: {round(daily_close, 2)} > PWL")
 
         except Exception as e:
@@ -75,26 +77,26 @@ def run_scanner(input_file='stocks.csv', output_file='filtered_stocks.csv'):
     if filtered_results:
         df_new = pd.DataFrame(filtered_results)
 
-        # 1. No Overwrite: Existing data read karke append karein
+        # File exist karti hai toh load karein
         if os.path.exists(output_path):
             try:
                 df_existing = pd.read_csv(output_path)
                 df_combined = pd.concat([df_existing, df_new], ignore_index=True)
             except Exception as e:
-                tqdm.write(f"Error reading existing file, starting fresh: {e}")
+                tqdm.write(f"Error reading existing file, creating new one: {e}")
                 df_combined = df_new
         else:
             df_combined = df_new
 
-        # 2. No Duplicate Entry: Fetch kiye huye saare columns par duplicate match check karein
+        # Duplicate entries remove karein
         df_combined = df_combined.drop_duplicates()
 
-        # 3. Current Week Only: Dynamic Monday to Sunday filter
+        # Retain data only for the current week (Monday to Sunday)
         df_combined['Date_dt'] = pd.to_datetime(df_combined['Date'])
         
         today = pd.Timestamp.now().normalize()
-        start_of_week = today - pd.Timedelta(days=today.weekday())  # Current Monday
-        end_of_week = start_of_week + pd.Timedelta(days=6)           # Current Sunday
+        start_of_week = today - pd.Timedelta(days=today.weekday()) # Current Monday
+        end_of_week = start_of_week + pd.Timedelta(days=6)          # Current Sunday
 
         df_weekly_only = df_combined[
             (df_combined['Date_dt'] >= start_of_week) & 
@@ -103,7 +105,7 @@ def run_scanner(input_file='stocks.csv', output_file='filtered_stocks.csv'):
 
         df_weekly_only = df_weekly_only.drop(columns=['Date_dt'])
 
-        # Final filtered file save karein
+        # Updated CSV save karein
         df_weekly_only.to_csv(output_path, index=False)
         print(f"\nScan completed! {len(df_weekly_only)} stock(s) from current week saved in '{output_path}'.")
     else:
