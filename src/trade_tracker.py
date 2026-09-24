@@ -64,8 +64,17 @@ def apply_excel_styling(ws):
 
 def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_file='trade_tracker_results.xlsx'):
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    input_path = os.path.join(script_dir, input_file)
-    output_path = os.path.join(script_dir, output_file)
+    project_root = os.path.dirname(script_dir)
+    
+    # Path resolution for input file (check data/ dir, then root)
+    input_path = os.path.join(project_root, 'data', os.path.basename(input_file))
+    if not os.path.exists(input_path):
+        input_path = os.path.join(project_root, os.path.basename(input_file))
+
+    # Save output strictly inside data/ directory
+    data_dir = os.path.join(project_root, 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    output_path = os.path.join(data_dir, os.path.basename(output_file))
 
     df_valid = pd.DataFrame()
 
@@ -81,7 +90,6 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
     tracked_results = []
 
-    # अगर valid setups खाली हैं, तो खाली current_week शीट तैयार होगी
     if df_valid.empty:
         print("ℹ️ Valid setups sheet is empty for current week. Clearing 'current_week' sheet...")
     else:
@@ -186,13 +194,11 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             }
             tracked_results.append(res)
 
-    # Empty DataFrame for current week if no valid setups
     if tracked_results:
         df_current = pd.DataFrame(tracked_results)
     else:
         df_current = pd.DataFrame(columns=['Ticker', 'PWL', 'SL', 'ENTRY', 'SL_%(Point)', 'TARGET_1:1', 'TARGET_1:2', 'Entry_Triggered_Time', 'Trade_Status', 'Exit_Time', 'Exit_Price', 'PnL_%'])
 
-    # HISTORY PRESERVATION: Existing History preserve karein
     df_history = pd.DataFrame()
 
     if not df_current.empty:
@@ -213,7 +219,6 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     else:
         df_history = df_triggered_only.copy()
 
-    # Save to Excel
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         df_current.to_excel(writer, sheet_name='current_week', index=False)
         apply_excel_styling(writer.sheets['current_week'])
@@ -222,7 +227,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             df_history.to_excel(writer, sheet_name='history_data', index=False)
             apply_excel_styling(writer.sheets['history_data'])
 
-    print(f"\n✅ Tracking Complete!")
+    print(f"\n✅ Tracking Complete in Data Folder!")
     print(f"📊 Sheet 'current_week': Reset & Updated ({len(df_current)} rows).")
     print(f"📚 Sheet 'history_data': Safely holding {len(df_history)} total executed trades.")
 
