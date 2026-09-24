@@ -9,10 +9,26 @@ def send_telegram_message(bot_token, chat_id, text):
     if res.status_code != 200:
         print(f"Failed to send Telegram Alert: {res.text}")
 
-def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_file='weekly_final_trading_signals.xlsx'):
+def get_valid_filepath(filename):
+    """Check data/ directory first, then root directory"""
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    tracker_path = os.path.join(script_dir, tracker_file)
-    next_day_path = os.path.join(script_dir, next_day_file)
+    project_root = os.path.dirname(script_dir)
+    
+    path_data = os.path.join(project_root, "data", os.path.basename(filename))
+    path_root = os.path.join(project_root, os.path.basename(filename))
+    path_script_data = os.path.join(script_dir, "data", os.path.basename(filename))
+    
+    if os.path.exists(path_data):
+        return path_data
+    elif os.path.exists(path_root):
+        return path_root
+    elif os.path.exists(path_script_data):
+        return path_script_data
+    return path_data
+
+def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_file='weekly_final_trading_signals.xlsx'):
+    tracker_path = get_valid_filepath(tracker_file)
+    next_day_path = get_valid_filepath(next_day_file)
     
     bot_token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_TO")
@@ -24,7 +40,7 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
     # MESSAGE 1: TODAY'S TRADE EXECUTION DETAILS
     try:
         if os.path.exists(tracker_path):
-            df_curr = pd.read_excel(tracker_path, sheet_name='current_week')
+            df_curr = pd.read_excel(tracker_path, sheet_name='current_week').dropna(how='all')
             
             if not df_curr.empty:
                 msg = "📌 *TODAY'S EXECUTED TRADES*\n"
@@ -40,7 +56,7 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
                     trig_time = row['Entry_Triggered_Time']
                     exit_time = row['Exit_Time']
                     pnl = row['PnL_%']
-                    pnl_str = f"+{pnl}%" if pnl > 0 else f"{pnl}%"
+                    pnl_str = f"+{pnl}%" if float(pnl or 0) > 0 else f"{pnl}%"
 
                     if "TARGET" in status:
                         icon = "🎯"
@@ -54,15 +70,14 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
                     item_msg = f"{icon} *{ticker}* — `{status}`\n"
                     item_msg += f"   • Entry: ₹{entry} | SL: ₹{sl}\n"
                     item_msg += f"   • Target 1:1: ₹{t1} | Target 1:2: ₹{t2}\n"
-                    if str(trig_time) != "N/A":
+                    if str(trig_time) != "nan" and str(trig_time) != "N/A":
                         item_msg += f"   • Trigger Time: `{trig_time}`\n"
-                    if str(exit_time) != "N/A":
+                    if str(exit_time) != "nan" and str(exit_time) != "N/A":
                         item_msg += f"   • Exit Time: `{exit_time}`\n"
                     if status != "WAIT (No Entry)":
                         item_msg += f"   • Result PnL: `{pnl_str}`\n"
                     item_msg += "\n"
 
-                    # If message reaches limit, send it and start a new message
                     if len(msg + item_msg) > 3800:
                         send_telegram_message(bot_token, chat_id, msg)
                         msg = "📌 *TODAY'S EXECUTED TRADES (Contd.)*\n\n"
@@ -71,19 +86,21 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
 
                 send_telegram_message(bot_token, chat_id, msg)
             else:
-                send_telegram_message(bot_token, chat_id, "📌 *TODAY'S EXECUTED TRADES*\n=============================\n\nआज के लिए कोई एक्टिव ट्रेड नहीं है।")
+                send_telegram_message(bot_token, chat_id, "📌 *TODAY'S EXECUTED TRADES*\n=============================\n\nAaj ke liye koi active trade nahi hai.")
+        else:
+            send_telegram_message(bot_token, chat_id, "📌 *TODAY'S EXECUTED TRADES*\n=============================\n\nTrade tracker file mil nahi rahi hai.")
     except Exception as e:
         send_telegram_message(bot_token, chat_id, f"⚠️ Trade tracker read error: {e}")
 
     # MESSAGE 2: NEXT DAY WATCHLIST (NEW SETUPS)
     try:
         if os.path.exists(next_day_path):
-            df_next = pd.read_excel(next_day_path, sheet_name='Valid_Setups_Only')
+            df_next = pd.read_excel(next_day_path, sheet_name='Valid_Setups_Only').dropna(how='all')
             msg_next = "📋 *NEXT DAY WATCHLIST (New Signals)*\n"
             msg_next += "=============================\n\n"
             
             if df_next.empty:
-                msg_next += "आज कल के लिए कोई नया setup नहीं मिला।"
+                msg_next += "Aaj kal ke liye koi naya setup nahi mila."
                 send_telegram_message(bot_token, chat_id, msg_next)
             else:
                 for _, row in df_next.iterrows():
@@ -99,6 +116,8 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
                     msg_next += item_msg
 
                 send_telegram_message(bot_token, chat_id, msg_next)
+        else:
+            send_telegram_message(bot_token, chat_id, "📋 *NEXT DAY WATCHLIST*\n=============================\n\nAaj kal ke liye koi naya setup nahi mila.")
     except Exception as e:
         send_telegram_message(bot_token, chat_id, f"⚠️ Next day signals read error: {e}")
 
