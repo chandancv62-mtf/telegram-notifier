@@ -105,8 +105,22 @@ def apply_excel_styling(ws, is_history_sheet=False):
                     col_name = col_name_list[0]
                     if col_name in ['SL', 'SL_%(Point)']:
                         cell.font = font_red
-                    elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'PnL_%', 'LTP']:
+                    elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'LTP']:
                         cell.font = font_green
+                    elif col_name == 'PnL_%':
+                        # Minus (-) values ko RED color aur positive ko GREEN color karna
+                        val_str = str(cell.value or '').strip()
+                        try:
+                            val_num = float(val_str)
+                            if val_num < 0:
+                                cell.font = font_red
+                            else:
+                                cell.font = font_green
+                        except ValueError:
+                            if '-' in val_str:
+                                cell.font = font_red
+                            else:
+                                cell.font = font_green
                     else:
                         cell.font = font_default
 
@@ -302,9 +316,27 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     else:
         df_history = df_triggered_only.copy()
 
-    # Sort history data chronologically so weeks stay grouped together
+    # Sort history data chronologically
     if not df_history.empty and 'Entry_Triggered_Time' in df_history.columns:
         df_history.sort_values(by=['Entry_Triggered_Time'], ascending=[True], inplace=True)
+
+    # HISTORY_DATA RULE: Previous weeks par Active trades ko 'Active (Week End)' mark karna
+    if not df_history.empty:
+        def update_past_week_active(row):
+            w_range = str(row.get('Week_Range', ''))
+            # Agar trade running current week ki nahi hai
+            if w_range != current_week_str:
+                status_str = str(row.get('Trade_Status', ''))
+                exit_str = str(row.get('Exit_Time', ''))
+                
+                # Active message / status update
+                if 'ACTIVE' in status_str.upper() and 'WEEK END' not in status_str.upper():
+                    row['Trade_Status'] = 'ACTIVE (Week End)'
+                if '(Active)' in exit_str:
+                    row['Exit_Time'] = exit_str.replace('(Active)', '(Week End)')
+            return row
+
+        df_history = df_history.apply(update_past_week_active, axis=1)
 
     cols_order = [
         'Ticker', 'PWL', 'SL', 'ENTRY', 'SL_%(Point)', 'TARGET_1:1', 'TARGET_1:2', 
@@ -327,8 +359,9 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             apply_excel_styling(writer.sheets['history_data'], is_history_sheet=True)
 
     print(f"\n✅ Tracking Complete!")
+    print(f"🔻 Negative PnL values ko Red color me formatting apply ho chuki hai.")
     print(f"📊 Sheet 'current_week': Overwritten for current week stocks ({len(df_current_out)} rows).")
-    print(f"📚 Sheet 'history_data': Saved continuously with weekly range headers ({len(df_history)} executed trades).")
+    print(f"📚 Sheet 'history_data': Past week Active trades update to 'Active (Week End)'.")
 
 if __name__ == "__main__":
     track_trade_status()
