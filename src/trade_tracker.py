@@ -35,7 +35,6 @@ def apply_excel_styling(ws, is_history_sheet=False):
     font_header = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
     fill_header = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
 
-    # Week Range Row Style - Whole Row Light Blue
     font_week_range = Font(name='Calibri', size=10, bold=True, color='1F4E78')
     fill_week_range = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
 
@@ -50,7 +49,6 @@ def apply_excel_styling(ws, is_history_sheet=False):
 
     header_map = {str(ws.cell(row=1, column=c).value): c for c in range(1, ws.max_column + 1)}
 
-    # DYNAMIC WEEK RANGE SEPARATORS FOR HISTORY SHEET
     if is_history_sheet and 'Week_Range' in header_map:
         week_col_idx = header_map['Week_Range']
         max_col = ws.max_column
@@ -64,11 +62,9 @@ def apply_excel_styling(ws, is_history_sheet=False):
             if cell_val and cell_val != current_week and not cell_val.startswith("Week Range:"):
                 current_week = cell_val
                 
-                # Insert dynamic week separator row
                 ws.insert_rows(row)
                 ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=max_col)
                 
-                # Style merged header row
                 for c in range(1, max_col + 1):
                     cell = ws.cell(row=row, column=c)
                     cell.fill = fill_week_range
@@ -78,14 +74,12 @@ def apply_excel_styling(ws, is_history_sheet=False):
                 ws.cell(row=row, column=1).value = f"Week Range: {current_week}"
                 ws.row_dimensions[row].height = 22
                 
-                row += 2  # Skip created header row and next data row
+                row += 2
             else:
                 row += 1
 
-        # Hide technical helper column 'Week_Range'
         ws.column_dimensions[get_column_letter(week_col_idx)].hidden = True
 
-    # Standard Cell Formatting
     for row in range(1, ws.max_row + 1):
         if is_history_sheet and str(ws.cell(row=row, column=1).value or '').startswith("Week Range:"):
             continue
@@ -108,7 +102,6 @@ def apply_excel_styling(ws, is_history_sheet=False):
                     elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'LTP']:
                         cell.font = font_green
                     elif col_name == 'PnL_%':
-                        # Minus (-) values ko RED color aur positive ko GREEN color karna
                         val_str = str(cell.value or '').strip()
                         try:
                             val_num = float(val_str)
@@ -207,7 +200,12 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                         df_15m.index = df_15m.index.tz_localize(None)
 
                     bu_dt = pd.to_datetime(bu_time_str)
-                    df_after_bu = df_15m[(df_15m.index > bu_dt) & (df_15m.index >= monday_start) & (df_15m.index <= sunday_end)]
+                    
+                    # Entry strictly next day (BU date ke agley din 00:00:00 se testing start hogi)
+                    next_day_start = (bu_dt + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    
+                    # Filter candles starting strictly from NEXT DAY after setup creation
+                    df_after_bu = df_15m[(df_15m.index >= next_day_start) & (df_15m.index >= monday_start) & (df_15m.index <= sunday_end)]
                     df_after_bu = df_after_bu.between_time('09:15', '15:15')
 
                     entry_candles = df_after_bu[df_after_bu['High'] >= entry_price]
@@ -301,11 +299,9 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         try:
             df_existing_history = pd.read_excel(output_path, sheet_name='history_data')
             
-            # Clean old visual header rows if present
             if not df_existing_history.empty and 'Ticker' in df_existing_history.columns:
                 df_existing_history = df_existing_history[~df_existing_history['Ticker'].astype(str).str.startswith("Week Range:")]
 
-            # Ensure accurate Week_Range for old data
             if not df_existing_history.empty and 'Entry_Triggered_Time' in df_existing_history.columns:
                 df_existing_history['Week_Range'] = df_existing_history['Entry_Triggered_Time'].apply(get_week_range_str)
 
@@ -316,20 +312,16 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     else:
         df_history = df_triggered_only.copy()
 
-    # Sort history data chronologically
     if not df_history.empty and 'Entry_Triggered_Time' in df_history.columns:
         df_history.sort_values(by=['Entry_Triggered_Time'], ascending=[True], inplace=True)
 
-    # HISTORY_DATA RULE: Previous weeks par Active trades ko 'Active (Week End)' mark karna
     if not df_history.empty:
         def update_past_week_active(row):
             w_range = str(row.get('Week_Range', ''))
-            # Agar trade running current week ki nahi hai
             if w_range != current_week_str:
                 status_str = str(row.get('Trade_Status', ''))
                 exit_str = str(row.get('Exit_Time', ''))
                 
-                # Active message / status update
                 if 'ACTIVE' in status_str.upper() and 'WEEK END' not in status_str.upper():
                     row['Trade_Status'] = 'ACTIVE (Week End)'
                 if '(Active)' in exit_str:
@@ -346,22 +338,17 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     if not df_history.empty:
         df_history = df_history[[c for c in cols_order if c in df_history.columns]]
 
-    # Save to Excel File
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        # Save Current Week Sheet (without Week_Range column)
         df_current_out = df_current.drop(columns=['Week_Range'], errors='ignore')
         df_current_out.to_excel(writer, sheet_name='current_week', index=False)
         apply_excel_styling(writer.sheets['current_week'], is_history_sheet=False)
 
-        # Save History Data Sheet
         if not df_history.empty:
             df_history.to_excel(writer, sheet_name='history_data', index=False)
             apply_excel_styling(writer.sheets['history_data'], is_history_sheet=True)
 
     print(f"\n✅ Tracking Complete!")
-    print(f"🔻 Negative PnL values ko Red color me formatting apply ho chuki hai.")
-    print(f"📊 Sheet 'current_week': Overwritten for current week stocks ({len(df_current_out)} rows).")
-    print(f"📚 Sheet 'history_data': Past week Active trades update to 'Active (Week End)'.")
+    print(f"📅 Entry setup check now strictly starts from NEXT DAY after BU_Time.")
 
 if __name__ == "__main__":
     track_trade_status()
