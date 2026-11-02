@@ -324,8 +324,8 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         font_week_range = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
         fill_week_range = PatternFill(start_color='41719C', end_color='41719C', fill_type='solid')
 
-        font_summary = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
-        fill_summary = PatternFill(start_color='2F5597', end_color='2F5597', fill_type='solid')
+        font_summary = Font(name='Calibri', size=10, bold=True, color='000000')
+        fill_summary = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
 
         font_grand = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
         fill_grand = PatternFill(start_color='203764', end_color='203764', fill_type='solid')
@@ -368,32 +368,59 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 ws_history.row_dimensions[current_row].height = 22
                 current_row += 1
 
-                # 2. Weekly Summary Row (Includes active/week end data summary)
+                # 2. Weekly Summary Row
                 sl_count = 0
                 profit_count = 0
                 active_count = 0
                 total_pnl = 0.0
                 trade_count = len(group_df)
                 
+                active_minus_count = 0
+                active_plus_count = 0
+                active_pnl_sum = 0.0
+                closed_pnl_sum = 0.0
+
                 for _, r_data in group_df.iterrows():
                     st = str(r_data.get('Trade_Status', '')).upper()
-                    if 'SL' in st:
-                        sl_count += 1
-                    if 'TARGET' in st:
-                        profit_count += 1
-                    if 'ACTIVE' in st:
-                        active_count += 1
+                    pnl_val = 0.0
                     try:
-                        total_pnl += float(r_data.get('PnL_%', 0))
+                        pnl_val = float(r_data.get('PnL_%', 0))
                     except:
                         pass
+
+                    if 'SL' in st and 'TARGET' not in st:
+                        sl_count += 1
+                        closed_pnl_sum += pnl_val
+                    elif 'TARGET' in st:
+                        profit_count += 1
+                        closed_pnl_sum += pnl_val
+                    elif 'ACTIVE' in st:
+                        active_count += 1
+                        if pnl_val < 0:
+                            active_minus_count += 1
+                        else:
+                            active_plus_count += 1
+                        active_pnl_sum += pnl_val
+                    else:
+                        closed_pnl_sum += pnl_val
+
+                    total_pnl += pnl_val
                 
                 grand_total_trades += trade_count
                 grand_profit_count += profit_count
                 grand_sl_count += sl_count
                 grand_total_pnl += total_pnl
 
-                summary_text = f"📊 WEEKLY SUMMARY -> Total Trades: {trade_count} | Targets Hit: {profit_count} | SL Hit: {sl_count} | Active/WeekEnd: {active_count} | Net PnL: {round(total_pnl, 2)}%"
+                net_pnl_rounded = round(closed_pnl_sum, 2)
+                active_pnl_rounded = round(active_pnl_sum, 2)
+                week_pnl_total = round(closed_pnl_sum + active_pnl_sum, 2)
+
+                summary_text = (
+                    f"📊 WEEKLY SUMMARY -> Total Trades: {trade_count} | Targets Hit: {profit_count} | "
+                    f"SL Hit: {sl_count} | Net PnL: {net_pnl_rounded}% | "
+                    f"Active (Week End) -> Minus: {active_minus_count}, Plus: {active_plus_count}, Overall: {active_pnl_rounded}% | "
+                    f"WEEK PNL = {week_pnl_total}%"
+                )
                 
                 ws_history.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=max_col)
                 for c in range(1, max_col + 1):
