@@ -191,7 +191,8 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             if not df_existing_history.empty and 'Ticker' in df_existing_history.columns:
                 df_existing_history = df_existing_history[
                     ~df_existing_history['Ticker'].astype(str).str.startswith("Week Range:") & 
-                    ~df_existing_history['Ticker'].astype(str).str.startswith("📊 WEEKLY SUMMARY")
+                    ~df_existing_history['Ticker'].astype(str).str.startswith("📊 WEEKLY SUMMARY") &
+                    ~df_existing_history['Ticker'].astype(str).str.startswith("🏆 GRAND OVERALL")
                 ].copy()
 
             if not df_existing_history.empty and 'Entry_Triggered_Time' in df_existing_history.columns:
@@ -244,11 +245,15 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         font_header = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
         fill_header = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
 
-        font_week_range = Font(name='Calibri', size=10, bold=True, color='1F4E78')
-        fill_week_range = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+        # Medium blue for week range row background
+        font_week_range = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
+        fill_week_range = PatternFill(start_color='41719C', end_color='41719C', fill_type='solid')
 
         font_summary = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
         fill_summary = PatternFill(start_color='2F5597', end_color='2F5597', fill_type='solid') # Medium Blue
+
+        font_grand = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        fill_grand = PatternFill(start_color='203764', end_color='203764', fill_type='solid') # Dark navy
 
         font_red = Font(name='Calibri', size=11, color='FF0000', bold=True)
         font_green = Font(name='Calibri', size=11, color='008000', bold=True)
@@ -266,13 +271,18 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             cell.fill = fill_header
             cell.alignment = center_align
 
+        grand_total_trades = 0
+        grand_profit_count = 0
+        grand_sl_count = 0
+        grand_total_pnl = 0.0
+
         if not df_history.empty and 'Week_Range' in df_history.columns:
             grouped = df_history.groupby('Week_Range', sort=True)
             current_row = 2
             max_col = len(cols_order)
             
             for week_range_val, group_df in grouped:
-                # 1. Week Range Row
+                # 1. Week Range Row (Medium blue background)
                 ws_history.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=max_col)
                 for c in range(1, max_col + 1):
                     cell = ws_history.cell(row=current_row, column=c)
@@ -283,7 +293,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 ws_history.row_dimensions[current_row].height = 22
                 current_row += 1
 
-                # 2. Weekly Summary Row (Right below Week Range)
+                # 2. Weekly Summary Row (Includes week-end data)
                 sl_count = 0
                 profit_count = 0
                 total_pnl = 0.0
@@ -300,6 +310,11 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                     except:
                         pass
                 
+                grand_total_trades += trade_count
+                grand_profit_count += profit_count
+                grand_sl_count += sl_count
+                grand_total_pnl += total_pnl
+
                 summary_text = f"📊 WEEKLY SUMMARY -> Total Trades: {trade_count} | Targets Hit (Profit): {profit_count} | SL Hit: {sl_count} | Net PnL: {round(total_pnl, 2)}%"
                 
                 ws_history.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=max_col)
@@ -350,13 +365,29 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                             cell.font = font_default
                     current_row += 1
 
+            # 4. Grand Overall Summary Row at the bottom
+            grand_text = f"🏆 GRAND OVERALL SUMMARY -> Total Trades: {grand_total_trades} | Total Targets Hit: {grand_profit_count} | Total SL Hit: {grand_sl_count} | Net Cumulative PnL: {round(grand_total_pnl, 2)}%"
+            ws_history.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=max_col)
+            for c in range(1, max_col + 1):
+                cell = ws_history.cell(row=current_row, column=c)
+                cell.fill = fill_grand
+                cell.font = font_grand
+                cell.alignment = center_align
+            ws_history.cell(row=current_row, column=1).value = grand_text
+            ws_history.row_dimensions[current_row].height = 24
+
         week_col_letter = get_column_letter(cols_order.index('Week_Range') + 1)
         ws_history.column_dimensions[week_col_letter].hidden = True
         
         for col in ws_history.columns:
-            max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = get_column_letter(col[0].column)
-            ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
+            col_name = cols_order[col[0].column - 1] if col[0].column <= len(cols_order) else ''
+            
+            if col_name == 'Ticker':
+                ws_history.column_dimensions[col_letter].width = 14
+            else:
+                max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY") and not str(cell.value or '').startswith("🏆 GRAND OVERALL"))
+                ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
     print(f"\n✅ Tracking Complete & Excel Updated Successfully!")
 
