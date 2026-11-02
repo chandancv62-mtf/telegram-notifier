@@ -29,6 +29,81 @@ def get_week_range_str(date_obj):
     return f"({monday.strftime('%d-%m-%Y')} to {sunday.strftime('%d-%m-%Y')})"
 
 
+def apply_current_week_styling(ws):
+    center_align = Alignment(horizontal='center', vertical='center')
+
+    font_header = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+    fill_header = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+
+    font_red = Font(name='Calibri', size=11, color='FF0000', bold=True)
+    font_green = Font(name='Calibri', size=11, color='008000', bold=True)
+    font_default = Font(name='Calibri', size=11, color='000000')
+
+    fill_target = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+    fill_sl = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+    fill_active = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+    fill_expired = PatternFill(start_color='D9D9D9', end_color='D9D9D9', fill_type='solid')
+
+    header_map = {str(ws.cell(row=1, column=c).value): c for c in range(1, ws.max_column + 1)}
+
+    for row in range(1, ws.max_row + 1):
+        ws.row_dimensions[row].height = 22 if row == 1 else 18
+
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.alignment = center_align
+
+            if row == 1:
+                cell.font = font_header
+                cell.fill = fill_header
+            else:
+                col_name_list = [k for k, v in header_map.items() if v == col]
+                if col_name_list:
+                    col_name = col_name_list[0]
+                    if col_name in ['SL', 'SL_%(Point)']:
+                        cell.font = font_red
+                    elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'LTP', 'Exit_Price']:
+                        cell.font = font_green
+                    elif col_name == 'PnL_%':
+                        val_str = str(cell.value or '').strip()
+                        try:
+                            val_num = float(val_str)
+                            if val_num < 0:
+                                cell.font = font_red
+                            else:
+                                cell.font = font_green
+                        except ValueError:
+                            if '-' in val_str:
+                                cell.font = font_red
+                            else:
+                                cell.font = font_green
+                    else:
+                        cell.font = font_default
+
+                    if col_name == 'Trade_Status':
+                        val = str(cell.value)
+                        if 'TARGET' in val:
+                            cell.fill = fill_target
+                            cell.font = font_green
+                        elif 'SL HIT' in val:
+                            cell.fill = fill_sl
+                            cell.font = font_red
+                        elif 'ACTIVE' in val:
+                            cell.fill = fill_active
+                        elif 'EXPIRED' in val:
+                            cell.fill = fill_expired
+                            cell.font = Font(name='Calibri', size=11, color='595959', italic=True)
+
+    for col in ws.columns:
+        col_letter = get_column_letter(col[0].column)
+        col_name = str(ws.cell(row=1, column=col[0].column).value)
+        if col_name == 'Ticker':
+            ws.column_dimensions[col_letter].width = 14
+        else:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[col_letter].width = max(max_len + 2, 8)
+
+
 def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_file='trade_tracker_results.xlsx'):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
@@ -235,6 +310,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         df_current_out = df_current.drop(columns=['Week_Range'], errors='ignore')
         df_current_out.to_excel(writer, sheet_name='current_week', index=False)
+        apply_current_week_styling(writer.sheets['current_week'])
         
         # Styles for history sheet
         ws_history = writer.book.create_sheet('history_data')
@@ -245,15 +321,14 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         font_header = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
         fill_header = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
 
-        # Medium blue for week range row background
         font_week_range = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
         fill_week_range = PatternFill(start_color='41719C', end_color='41719C', fill_type='solid')
 
         font_summary = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
-        fill_summary = PatternFill(start_color='2F5597', end_color='2F5597', fill_type='solid') # Medium Blue
+        fill_summary = PatternFill(start_color='2F5597', end_color='2F5597', fill_type='solid')
 
         font_grand = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
-        fill_grand = PatternFill(start_color='203764', end_color='203764', fill_type='solid') # Dark navy
+        fill_grand = PatternFill(start_color='203764', end_color='203764', fill_type='solid')
 
         font_red = Font(name='Calibri', size=11, color='FF0000', bold=True)
         font_green = Font(name='Calibri', size=11, color='008000', bold=True)
@@ -282,7 +357,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             max_col = len(cols_order)
             
             for week_range_val, group_df in grouped:
-                # 1. Week Range Row (Medium blue background)
+                # 1. Week Range Row
                 ws_history.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=max_col)
                 for c in range(1, max_col + 1):
                     cell = ws_history.cell(row=current_row, column=c)
@@ -293,9 +368,10 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 ws_history.row_dimensions[current_row].height = 22
                 current_row += 1
 
-                # 2. Weekly Summary Row (Includes week-end data)
+                # 2. Weekly Summary Row (Includes active/week end data summary)
                 sl_count = 0
                 profit_count = 0
+                active_count = 0
                 total_pnl = 0.0
                 trade_count = len(group_df)
                 
@@ -305,6 +381,8 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                         sl_count += 1
                     if 'TARGET' in st:
                         profit_count += 1
+                    if 'ACTIVE' in st:
+                        active_count += 1
                     try:
                         total_pnl += float(r_data.get('PnL_%', 0))
                     except:
@@ -315,7 +393,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 grand_sl_count += sl_count
                 grand_total_pnl += total_pnl
 
-                summary_text = f"📊 WEEKLY SUMMARY -> Total Trades: {trade_count} | Targets Hit (Profit): {profit_count} | SL Hit: {sl_count} | Net PnL: {round(total_pnl, 2)}%"
+                summary_text = f"📊 WEEKLY SUMMARY -> Total Trades: {trade_count} | Targets Hit: {profit_count} | SL Hit: {sl_count} | Active/WeekEnd: {active_count} | Net PnL: {round(total_pnl, 2)}%"
                 
                 ws_history.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=max_col)
                 for c in range(1, max_col + 1):
