@@ -29,7 +29,7 @@ def get_week_range_str(date_obj):
     return f"({monday.strftime('%d-%m-%Y')} to {sunday.strftime('%d-%m-%Y')})"
 
 
-def apply_excel_styling(ws, is_history_sheet=False):
+def apply_excel_styling(ws, is_history_sheet=False, weekly_summaries=None):
     center_align = Alignment(horizontal='center', vertical='center')
 
     font_header = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
@@ -37,6 +37,9 @@ def apply_excel_styling(ws, is_history_sheet=False):
 
     font_week_range = Font(name='Calibri', size=10, bold=True, color='1F4E78')
     fill_week_range = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+
+    font_summary = Font(name='Calibri', size=10, bold=True, color='002060')
+    fill_summary = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
 
     font_red = Font(name='Calibri', size=11, color='FF0000', bold=True)
     font_green = Font(name='Calibri', size=11, color='008000', bold=True)
@@ -59,19 +62,67 @@ def apply_excel_styling(ws, is_history_sheet=False):
         while row <= ws.max_row:
             cell_val = str(ws.cell(row=row, column=week_col_idx).value or '').strip()
             
-            if cell_val and cell_val != current_week and not cell_val.startswith("Week Range:"):
+            if cell_val and cell_val != current_week and not cell_val.startswith("Week Range:") and not cell_val.startswith("Summary:"):
                 current_week = cell_val
                 
+                # 1. Insert Week Range Header Row
                 ws.insert_rows(row)
                 ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=max_col)
-                
                 for c in range(1, max_col + 1):
                     cell = ws.cell(row=row, column=c)
                     cell.fill = fill_week_range
                     cell.font = font_week_range
                     cell.alignment = center_align
-                
                 ws.cell(row=row, column=1).value = f"Week Range: {current_week}"
+                ws.row_dimensions[row].height = 22
+                
+                row += 1 # Move to trades
+                
+                # Find trades belonging to this week to compute summary
+                # We will scan down until next Week Range or end of sheet
+                trade_rows_start = row
+                while row <= ws.max_row:
+                    next_val = str(ws.cell(row=row, column=week_col_idx).value or '').strip()
+                    if next_val and next_val != current_week:
+                        break
+                    row += 1
+                trade_rows_end = row - 1
+                
+                # Calculate summary stats for this week
+                sl_count = 0
+                profit_count = 0
+                total_pnl = 0.0
+                trade_count = 0
+                
+                status_col_idx = header_map.get('Trade_Status')
+                pnl_col_idx = header_map.get('PnL_%')
+                
+                for r in range(trade_rows_start, trade_rows_end + 1):
+                    if status_col_idx:
+                        st_val = str(ws.cell(row=r, column=status_col_idx).value or '').upper()
+                        if 'SL' in st_val:
+                            sl_count += 1
+                        if 'TARGET' in st_val:
+                            profit_count += 1
+                    if pnl_col_idx:
+                        try:
+                            pnl_val = float(ws.cell(row=r, column=pnl_col_idx).value or 0)
+                            total_pnl += pnl_val
+                        except ValueError:
+                            pass
+                    trade_count += 1
+
+                summary_text = f"📊 WEEKLY SUMMARY -> Total Trades: {trade_count} | Targets Hit (Profit): {profit_count} | SL Hit: {sl_count} | Net PnL: {round(total_pnl, 2)}%"
+
+                # 2. Insert Summary Row right below the week's trades
+                ws.insert_rows(row)
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=max_col)
+                for c in range(1, max_col + 1):
+                    cell = ws.cell(row=row, column=c)
+                    cell.fill = fill_summary
+                    cell.font = font_summary
+                    cell.alignment = center_align
+                ws.cell(row=row, column=1).value = summary_text
                 ws.row_dimensions[row].height = 22
                 
                 row += 2
@@ -81,7 +132,8 @@ def apply_excel_styling(ws, is_history_sheet=False):
         ws.column_dimensions[get_column_letter(week_col_idx)].hidden = True
 
     for row in range(1, ws.max_row + 1):
-        if is_history_sheet and str(ws.cell(row=row, column=1).value or '').startswith("Week Range:"):
+        row_val_str = str(ws.cell(row=row, column=1).value or '')
+        if is_history_sheet and (row_val_str.startswith("Week Range:") or row_val_str.startswith("📊 WEEKLY SUMMARY")):
             continue
 
         ws.row_dimensions[row].height = 22 if row == 1 else 18
@@ -132,7 +184,7 @@ def apply_excel_styling(ws, is_history_sheet=False):
                             cell.font = Font(name='Calibri', size=11, color='595959', italic=True)
 
     for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:"))
+        max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY"))
         col_letter = get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
@@ -200,11 +252,8 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                         df_15m.index = df_15m.index.tz_localize(None)
 
                     bu_dt = pd.to_datetime(bu_time_str)
-                    
-                    # Entry strictly next day (BU date ke agley din 00:00:00 se testing start hogi)
                     next_day_start = (bu_dt + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                     
-                    # Filter candles starting strictly from NEXT DAY after setup creation
                     df_after_bu = df_15m[(df_15m.index >= next_day_start) & (df_15m.index >= monday_start) & (df_15m.index <= sunday_end)]
                     df_after_bu = df_after_bu.between_time('09:15', '15:15')
 
@@ -300,7 +349,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             df_existing_history = pd.read_excel(output_path, sheet_name='history_data')
             
             if not df_existing_history.empty and 'Ticker' in df_existing_history.columns:
-                df_existing_history = df_existing_history[~df_existing_history['Ticker'].astype(str).str.startswith("Week Range:")]
+                df_existing_history = df_existing_history[~df_existing_history['Ticker'].astype(str).str.startswith("Week Range:") & ~df_existing_history['Ticker'].astype(str).str.startswith("📊 WEEKLY SUMMARY")]
 
             if not df_existing_history.empty and 'Entry_Triggered_Time' in df_existing_history.columns:
                 df_existing_history['Week_Range'] = df_existing_history['Entry_Triggered_Time'].apply(get_week_range_str)
@@ -348,7 +397,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             apply_excel_styling(writer.sheets['history_data'], is_history_sheet=True)
 
     print(f"\n✅ Tracking Complete!")
-    print(f"📅 Entry setup check now strictly starts from NEXT DAY after BU_Time.")
+    print(f"📅 Weekly summary rows have been successfully added under each week range in history_data sheet!")
 
 if __name__ == "__main__":
     track_trade_status()
