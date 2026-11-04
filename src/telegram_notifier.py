@@ -38,13 +38,13 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
         print("❌ Telegram Credentials missing in environment variables.")
         return
 
-    # MESSAGE 1: TRADE EXECUTION SUMMARY (Minimalist & Clean Look with Daily & Total PnL)
+    # MESSAGE 1: TRADE EXECUTION SUMMARY (Excluding Waiting List)
     try:
         if os.path.exists(tracker_path):
             df_curr = pd.read_excel(tracker_path, sheet_name='current_week').dropna(how='all')
             
             if not df_curr.empty:
-                # Exclude 'WAIT (No Entry)' from execution summary dashboard
+                # Exclude 'WAIT (No Entry)' from tracker summary
                 df_executed = df_curr[df_curr['Trade_Status'].astype(str) != 'WAIT (No Entry)'].copy()
                 
                 targets_df = df_executed[df_executed['Trade_Status'].astype(str).str.contains('TARGET', case=False, na=False)]
@@ -52,18 +52,17 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
                 active_df = df_executed[df_executed['Trade_Status'].astype(str) == 'ACTIVE']
                 other_df = df_executed[~df_executed.index.isin(targets_df.index.union(sl_df.index).union(active_df.index))]
 
-                total_monitored = len(df_executed)
+                total_monitored = len(df_curr)  # Total all-inclusive count if needed, or len(df_executed)
                 cnt_target = len(targets_df)
                 cnt_sl = len(sl_df)
                 cnt_active = len(active_df)
 
-                # Calculate PnL (Daily/Today vs Total Week)
+                # PnL Calculations
                 df_executed['PnL_%'] = pd.to_numeric(df_executed['PnL_%'], errors='coerce').fillna(0)
                 total_week_pnl = df_executed['PnL_%'].sum()
                 
-                # For demonstration, today's PnL (checking exit date or current system date, e.g., today)
                 today_str = datetime.now().strftime('%Y-%m-%d')
-                df_today = df_executed[df_executed['Exit_Time'].astype(str).str.contains(today_str, na=False)]
+                df_today = df_executed[df_executed['Exit_Time'].astype(str).str.contains(today_str, na=False) | df_executed['Entry_Triggered_Time'].astype(str).str.contains(today_str, na=False)]
                 daily_pnl = df_today['PnL_%'].sum() if not df_today.empty else 0.0
 
                 daily_pnl_str = f"+{daily_pnl:.2f}%" if daily_pnl >= 0 else f"{daily_pnl:.2f}%"
@@ -72,7 +71,7 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
                 # Header Banner
                 msg = "📊 *TRADING PERFORMANCE SUMMARY*\n"
                 msg += "──────────────────────────────\n"
-                msg += f"📈 *Total Monitored:* `{total_monitored}`\n"
+                msg += f"📈 *Total Monitored:* `{len(df_curr)}`\n"
                 msg += f"🎯 *Target Hit:* `{cnt_target}`  |  🔴 *SL Hit:* `{cnt_sl}`\n"
                 msg += f"🟢 *Active:* `{cnt_active}`\n"
                 msg += f"📅 *Today's PnL:* `{daily_pnl_str}` ⚡\n"
@@ -95,14 +94,27 @@ def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_fi
                         
                         pnl_display = f"🟢 `+{pnl}%`" if pnl > 0 else (f"🔴 `{pnl}%`" if pnl < 0 else f"`{pnl}%`")
                         
-                        # Highlighting target/SL status distinctly
-                        status_highlight = f"🌟 *{status}* 🌟" if "TARGET" in status else (f"⚠️ *{status}* ⚠️" if "SL" in status else f"`{status}`")
+                        # Highlight today's hits using emojis and bold text since telegram doesn't support font color tags
+                        is_today = today_str in trig_time or today_str in exit_time
+                        
+                        if is_today and "TARGET" in status:
+                            status_highlight = f"🟩🔥 *{status} (TODAY'S HIT)* 🔥🟩"
+                        elif is_today and "SL" in status:
+                            status_highlight = f"🟥🔥 *{status} (TODAY'S HIT)* 🔥🟥"
+                        elif "TARGET" in status:
+                            status_highlight = f"🌟 *{status}* 🌟"
+                        elif "SL" in status:
+                            status_highlight = f"⚠️ *{status}* ⚠️"
+                        else:
+                            status_highlight = f"`{status}`"
 
                         section_text += f"▪️ *{ticker}* ⟾ {status_highlight}\n"
                         section_text += f"   ├ *Entry:* ₹{entry} │ *SL:* ₹{sl}\n"
                         section_text += f"   ├ *Target (1:2):* ₹{t2} │ *PnL:* {pnl_display}\n"
+                        
                         if trig_time not in ["nan", "N/A", "None", ""]:
                             section_text += f"   ├ *Entry Date/Time:* `{trig_time}`\n"
+                        
                         if exit_time not in ["nan", "N/A", "None", ""]:
                             section_text += f"   └ *Exit Date/Time:* `{exit_time}`\n"
                         else:
