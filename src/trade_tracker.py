@@ -29,6 +29,19 @@ def get_week_range_str(date_obj):
     return f"({monday.strftime('%d-%m-%Y')} to {sunday.strftime('%d-%m-%Y')})"
 
 
+def calculate_swing_taxes(buy_value, sell_value):
+    """Calculate standard Indian stock exchange taxes & charges for swing trade (Delivery)"""
+    brokerage = 40.0  # ₹20 Buy + ₹20 Sell
+    stt = (buy_value * 0.001) + (sell_value * 0.001)  # 0.1% on Buy & Sell
+    exchange_charges = (buy_value * 0.0000325) + (sell_value * 0.0000325)  # NSE txn charges
+    gst = 0.18 * (brokerage + exchange_charges)  # 18% GST on brokerage + exchange charges
+    sebi_charges = (buy_value + sell_value) * 0.000001  # ₹10 per crore
+    stamp_duty = buy_value * 0.00015  # 0.015% on buy side only
+    
+    total_taxes = brokerage + stt + exchange_charges + gst + sebi_charges + stamp_duty
+    return round(total_taxes, 2)
+
+
 def apply_current_week_styling(ws):
     center_align = Alignment(horizontal='center', vertical='center')
 
@@ -62,12 +75,14 @@ def apply_current_week_styling(ws):
                     col_name = col_name_list[0]
                     if col_name in ['SL', 'SL_%(Point)']:
                         cell.font = font_red
-                    elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'LTP', 'Exit_Price']:
+                    elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'LTP', 'Exit_Price', 'exit_value_total']:
                         cell.font = font_green
-                    elif col_name == 'PnL_%':
+                    elif col_name in ['PnL_%', 'FINAL PNL']:
                         val_str = str(cell.value or '').strip()
                         try:
-                            val_num = float(val_str)
+                            # Extract numeric value if formatted as string with % or ₹
+                            cleaned_val = val_str.split('%')[0].replace('+', '').strip()
+                            val_num = float(cleaned_val)
                             if val_num < 0:
                                 cell.font = font_red
                             else:
@@ -158,6 +173,16 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             exit_price = None
             pnl_pct = 0.0
 
+            # New column metrics initialization
+            invest_amount = 10000.0
+            no_stock = int(invest_amount // entry_price) if entry_price > 0 else 0
+            if no_stock == 0:
+                no_stock = 1  # Minimum 1 share if entry price > 10000
+            
+            exit_value_total = 0.0
+            total_all_taxes = 0.0
+            final_pnl_str = "0.0% (₹0.0)"
+
             try:
                 ticker = yf.Ticker(ticker_symbol)
                 df_15m = ticker.history(period="5d", interval="15m")
@@ -170,7 +195,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                     next_day_start = (bu_dt + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                     
                     df_after_bu = df_15m[(df_15m.index >= next_day_start) & (df_15m.index >= monday_start) & (df_15m.index <= sunday_end)]
-                    df_after_bu = df_after_bu.between_time('09:15', '15:15')
+                    df_after_bu = df_15m.between_time('09:15', '15:15')
 
                     entry_candles = df_after_bu[df_after_bu['High'] >= entry_price]
 
@@ -218,9 +243,26 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
                     else:
                         trade_status = "WAIT (No Entry)"
+                        exit_price = entry_price  # Baseline for calculation when no entry
 
             except Exception as e:
                 trade_status = f"ERROR: {str(e)}"
+                exit_price = entry_price
+
+            if exit_price is None:
+                exit_price = entry_price
+
+            # Calculations for new columns
+            invested_capital = entry_price * no_stock
+            exit_value_total = round(exit_price * no_stock, 2)
+            total_all_taxes = calculate_swing_taxes(invested_capital, exit_value_total)
+            
+            gross_pnl_value = exit_value_total - invested_capital
+            net_pnl_value = round(gross_pnl_value - total_all_taxes, 2)
+            final_pnl_pct = round((net_pnl_value / invest_amount) * 100, 2)
+            
+            sign_str = "+" if net_pnl_value >= 0 else ""
+            final_pnl_str = f"{sign_str}{final_pnl_pct}% ({sign_str}₹{net_pnl_value})"
 
             wk_range = get_week_range_str(entry_triggered_time if entry_triggered_time != "N/A" else current_week_str)
 
@@ -237,17 +279,25 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 'Exit_Time': exit_time,
                 'Exit_Price': exit_price,
                 'PnL_%': pnl_pct,
+                'invest_amount': invest_amount,
+                'no_stock': no_stock,
+                'exit_value_total': exit_value_total,
+                'total_all_taxes': total_all_taxes,
+                'FINAL PNL': final_pnl_str,
                 'Week_Range': wk_range
             }
             tracked_results.append(res)
 
+    cols_order = [
+        'Ticker', 'PWL', 'SL', 'ENTRY', 'SL_%(Point)', 'TARGET_1:1', 'TARGET_1:2', 
+        'Entry_Triggered_Time', 'Trade_Status', 'Exit_Time', 'Exit_Price', 'PnL_%',
+        'invest_amount', 'no_stock', 'exit_value_total', 'total_all_taxes', 'FINAL PNL', 'Week_Range'
+    ]
+
     if tracked_results:
         df_current = pd.DataFrame(tracked_results)
     else:
-        df_current = pd.DataFrame(columns=[
-            'Ticker', 'PWL', 'SL', 'ENTRY', 'SL_%(Point)', 'TARGET_1:1', 'TARGET_1:2', 
-            'Entry_Triggered_Time', 'Trade_Status', 'Exit_Time', 'Exit_Price', 'PnL_%', 'Week_Range'
-        ])
+        df_current = pd.DataFrame(columns=cols_order)
 
     df_history = pd.DataFrame()
 
@@ -298,11 +348,6 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
         df_history = df_history.apply(update_past_week_active, axis=1)
 
-    cols_order = [
-        'Ticker', 'PWL', 'SL', 'ENTRY', 'SL_%(Point)', 'TARGET_1:1', 'TARGET_1:2', 
-        'Entry_Triggered_Time', 'Trade_Status', 'Exit_Time', 'Exit_Price', 'PnL_%', 'Week_Range'
-    ]
-    
     if not df_history.empty:
         df_history = df_history[[c for c in cols_order if c in df_history.columns]]
 
@@ -315,7 +360,8 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         # Styles for history sheet
         ws_history = writer.book.create_sheet('history_data')
         
-        ws_history.append(cols_order)
+        active_cols_history = [c for c in cols_order if c != 'Week_Range']
+        ws_history.append(active_cols_history)
         
         center_align = Alignment(horizontal='center', vertical='center')
         font_header = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
@@ -340,7 +386,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         fill_expired = PatternFill(start_color='D9D9D9', end_color='D9D9D9', fill_type='solid')
 
         ws_history.row_dimensions[1].height = 22
-        for col_idx in range(1, len(cols_order) + 1):
+        for col_idx in range(1, len(active_cols_history) + 1):
             cell = ws_history.cell(row=1, column=col_idx)
             cell.font = font_header
             cell.fill = fill_header
@@ -354,7 +400,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         if not df_history.empty and 'Week_Range' in df_history.columns:
             grouped = df_history.groupby('Week_Range', sort=True)
             current_row = 2
-            max_col = len(cols_order)
+            max_col = len(active_cols_history)
             
             for week_range_val, group_df in grouped:
                 # 1. Week Range Row
@@ -418,7 +464,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 summary_text = (
                     f"📊 WEEKLY SUMMARY -> Total Trades: {trade_count} | Targets Hit: {profit_count} | "
                     f"SL Hit: {sl_count} | Net PnL: {net_pnl_rounded}% | "
-                    f"Active (Week End) -> Minus: {active_minus_count}, Plus: {active_plus_count}, Overall: {active_pnl_rounded}% | "
+                    f"Active -> Minus: {active_minus_count}, Plus: {active_plus_count} | "
                     f"WEEK PNL = {week_pnl_total}%"
                 )
                 
@@ -434,22 +480,23 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
                 # 3. Trade Rows
                 for _, r_data in group_df.iterrows():
-                    row_vals = [r_data[c] for c in cols_order]
+                    row_vals = [r_data[c] for c in active_cols_history]
                     ws_history.append(row_vals)
                     ws_history.row_dimensions[current_row].height = 18
                     
                     for c_idx in range(1, max_col + 1):
                         cell = ws_history.cell(row=current_row, column=c_idx)
                         cell.alignment = center_align
-                        col_name = cols_order[c_idx - 1]
+                        col_name = active_cols_history[c_idx - 1]
                         
                         if col_name in ['SL', 'SL_%(Point)']:
                             cell.font = font_red
-                        elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'Exit_Price']:
+                        elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'Exit_Price', 'exit_value_total']:
                             cell.font = font_green
-                        elif col_name == 'PnL_%':
+                        elif col_name in ['PnL_%', 'FINAL PNL']:
                             try:
-                                v_num = float(cell.value)
+                                v_str = str(cell.value).split('%')[0].replace('+', '').strip()
+                                v_num = float(v_str)
                                 cell.font = font_red if v_num < 0 else font_green
                             except:
                                 cell.font = font_green
@@ -470,7 +517,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                             cell.font = font_default
                     current_row += 1
 
-            # 4. Grand Overall Summary Row at the bottom
+            # 4. Grand Overall Summary Row
             grand_text = f"🏆 GRAND OVERALL SUMMARY -> Total Trades: {grand_total_trades} | Total Targets Hit: {grand_profit_count} | Total SL Hit: {grand_sl_count} | Net Cumulative PnL: {round(grand_total_pnl, 2)}%"
             ws_history.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=max_col)
             for c in range(1, max_col + 1):
@@ -481,12 +528,9 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             ws_history.cell(row=current_row, column=1).value = grand_text
             ws_history.row_dimensions[current_row].height = 24
 
-        week_col_letter = get_column_letter(cols_order.index('Week_Range') + 1)
-        ws_history.column_dimensions[week_col_letter].hidden = True
-        
         for col in ws_history.columns:
             col_letter = get_column_letter(col[0].column)
-            col_name = cols_order[col[0].column - 1] if col[0].column <= len(cols_order) else ''
+            col_name = active_cols_history[col[0].column - 1] if col[0].column <= len(active_cols_history) else ''
             
             if col_name == 'Ticker':
                 ws_history.column_dimensions[col_letter].width = 14
@@ -494,7 +538,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY") and not str(cell.value or '').startswith("🏆 GRAND OVERALL"))
                 ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
-    print(f"\n✅ Tracking Complete & Excel Updated Successfully!")
+    print(f"\n✅ Tracking Complete & Excel Updated Successfully with New Columns!")
 
 if __name__ == "__main__":
     track_trade_status()
