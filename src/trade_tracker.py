@@ -75,12 +75,11 @@ def apply_current_week_styling(ws):
                     col_name = col_name_list[0]
                     if col_name in ['SL', 'SL_%(Point)']:
                         cell.font = font_red
-                    elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'LTP', 'Exit_Price', 'exit_value_total']:
+                    elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'LTP', 'Exit_Price', 'exit_value_total', 'Invest']:
                         cell.font = font_green
                     elif col_name in ['PnL_%', 'FINAL PNL']:
                         val_str = str(cell.value or '').strip()
                         try:
-                            # Extract numeric value if formatted as string with % or ₹
                             cleaned_val = val_str.split('%')[0].replace('+', '').strip()
                             val_num = float(cleaned_val)
                             if val_num < 0:
@@ -173,12 +172,13 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             exit_price = None
             pnl_pct = 0.0
 
-            # New column metrics initialization
-            invest_amount = 10000.0
-            no_stock = int(invest_amount // entry_price) if entry_price > 0 else 0
+            # Updated columns metrics
+            amount = 10000.0
+            no_stock = int(amount // entry_price) if entry_price > 0 else 0
             if no_stock == 0:
-                no_stock = 1  # Minimum 1 share if entry price > 10000
+                no_stock = 1  
             
+            invest = round(no_stock * entry_price, 2)
             exit_value_total = 0.0
             total_all_taxes = 0.0
             final_pnl_str = "0.0% (₹0.0)"
@@ -243,7 +243,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
                     else:
                         trade_status = "WAIT (No Entry)"
-                        exit_price = entry_price  # Baseline for calculation when no entry
+                        exit_price = entry_price  
 
             except Exception as e:
                 trade_status = f"ERROR: {str(e)}"
@@ -253,13 +253,12 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 exit_price = entry_price
 
             # Calculations for new columns
-            invested_capital = entry_price * no_stock
             exit_value_total = round(exit_price * no_stock, 2)
-            total_all_taxes = calculate_swing_taxes(invested_capital, exit_value_total)
+            total_all_taxes = calculate_swing_taxes(invest, exit_value_total)
             
-            gross_pnl_value = exit_value_total - invested_capital
+            gross_pnl_value = exit_value_total - invest
             net_pnl_value = round(gross_pnl_value - total_all_taxes, 2)
-            final_pnl_pct = round((net_pnl_value / invest_amount) * 100, 2)
+            final_pnl_pct = round((net_pnl_value / amount) * 100, 2)
             
             sign_str = "+" if net_pnl_value >= 0 else ""
             final_pnl_str = f"{sign_str}{final_pnl_pct}% ({sign_str}₹{net_pnl_value})"
@@ -279,8 +278,9 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 'Exit_Time': exit_time,
                 'Exit_Price': exit_price,
                 'PnL_%': pnl_pct,
-                'invest_amount': invest_amount,
+                'Amount': amount,
                 'no_stock': no_stock,
+                'Invest': invest,
                 'exit_value_total': exit_value_total,
                 'total_all_taxes': total_all_taxes,
                 'FINAL PNL': final_pnl_str,
@@ -291,7 +291,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     cols_order = [
         'Ticker', 'PWL', 'SL', 'ENTRY', 'SL_%(Point)', 'TARGET_1:1', 'TARGET_1:2', 
         'Entry_Triggered_Time', 'Trade_Status', 'Exit_Time', 'Exit_Price', 'PnL_%',
-        'invest_amount', 'no_stock', 'exit_value_total', 'total_all_taxes', 'FINAL PNL', 'Week_Range'
+        'Amount', 'no_stock', 'Invest', 'exit_value_total', 'total_all_taxes', 'FINAL PNL', 'Week_Range'
     ]
 
     if tracked_results:
@@ -491,7 +491,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                         
                         if col_name in ['SL', 'SL_%(Point)']:
                             cell.font = font_red
-                        elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'Exit_Price', 'exit_value_total']:
+                        elif col_name in ['ENTRY', 'TARGET_1:1', 'TARGET_1:2', 'Exit_Price', 'exit_value_total', 'Invest']:
                             cell.font = font_green
                         elif col_name in ['PnL_%', 'FINAL PNL']:
                             try:
@@ -538,7 +538,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY") and not str(cell.value or '').startswith("🏆 GRAND OVERALL"))
                 ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
-    print(f"\n✅ Tracking Complete & Excel Updated Successfully with New Columns!")
+    print(f"\n✅ Tracking Complete & Excel Updated Successfully with 'Amount' and 'Invest' Columns!")
 
 if __name__ == "__main__":
     track_trade_status()
