@@ -114,7 +114,7 @@ def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
     
-    # Path resolution for input file (check root, data/ dir, and script_dir)
+    # Path resolution for input file
     input_path = os.path.join(project_root, 'data', input_file)
     if not os.path.exists(input_path):
         input_path = os.path.join(project_root, input_file)
@@ -130,11 +130,11 @@ def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file
     monday_start = (today - datetime.timedelta(days=today.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday_end = monday_start + datetime.timedelta(days=6, hours=23, minutes=59)
 
-    # Delete old file on Monday
+    # Delete old file on Monday to ensure fresh scan & blank output if no stocks found
     if today.weekday() == 0 and os.path.exists(output_path):
         try:
             os.remove(output_path)
-            print("🧹 New Week Started (Monday): Previous week file deleted successfully.")
+            print("🧹 New Week Started (Monday): Previous week file cleared.")
         except Exception as e:
             print(f"⚠️ Failed to remove old file: {e}")
 
@@ -267,15 +267,4 @@ def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file
         except Exception as e:
             continue
 
-    with pd.ExcelWriter(output_path, engine='openpyxl', mode='w') as writer:
-        pd.DataFrame(all_master_results).to_excel(writer, sheet_name='All_Stocks_Master', index=False)
-        pd.DataFrame(valid_results).to_excel(writer, sheet_name='Valid_Setups_Only', index=False)
-        pd.DataFrame(invalid_results).to_excel(writer, sheet_name='Invalid_Setups_Only', index=False)
-
-    # Format Excel output
-    apply_excel_styling(output_path)
-
-    print(f"\n✅ Fresh Compact Week File Generated in Data Folder with Color Coding: '{output_path}'")
-
-if __name__ == "__main__":
-    process_exact_bd_bu_lowest_low()
+    # Save output
