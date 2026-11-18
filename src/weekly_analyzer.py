@@ -111,18 +111,23 @@ def apply_excel_styling(output_path):
 
 
 def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file='weekly_final_trading_signals.xlsx'):
+    # Server-friendly absolute path resolution
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
     
-    # Path resolution for input file
+    # Path resolution for input file (Checks data/ folder first, then script root)
     input_path = os.path.join(project_root, 'data', input_file)
+    if not os.path.exists(input_path):
+        input_path = os.path.join(script_dir, input_file)
     if not os.path.exists(input_path):
         input_path = os.path.join(project_root, input_file)
     if not os.path.exists(input_path):
-        input_path = os.path.join(project_root, 'data', 'entry_sl_signals.xlsx')
+        input_path = os.path.join(script_dir, 'data', 'entry_sl_signals.xlsx')
 
-    # Save output strictly inside data/ directory
+    # Save output safely inside data/ directory or script directory
     data_dir = os.path.join(project_root, 'data')
+    if not os.path.exists(data_dir):
+        data_dir = script_dir
     os.makedirs(data_dir, exist_ok=True)
     output_path = os.path.join(data_dir, os.path.basename(output_file))
 
@@ -130,15 +135,16 @@ def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file
     monday_start = (today - datetime.timedelta(days=today.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     sunday_end = monday_start + datetime.timedelta(days=6, hours=23, minutes=59)
 
-    # Delete old file on Monday to ensure fresh scan & blank output if no stocks found
+    # Delete old file on Monday
     if today.weekday() == 0 and os.path.exists(output_path):
         try:
             os.remove(output_path)
-            print("🧹 New Week Started (Monday): Previous week file cleared.")
+            print("🧹 New Week Started (Monday): Previous week file deleted successfully.")
         except Exception as e:
             print(f"⚠️ Failed to remove old file: {e}")
 
     try:
+        # Support both CSV and Excel formats dynamically
         if input_path.endswith('.csv'):
             df_signals = pd.read_csv(input_path)
         else:
@@ -164,6 +170,8 @@ def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file
             ticker_symbol = stock_name if (stock_name.endswith('.NS') or stock_name.endswith('.BO')) else stock_name + '.NS'
 
             symbol_row = df_signals[df_signals['Ticker'] == symbol].iloc[-1]
+            
+            # Support both 'Prev_Week_Low' and 'PWL' column names
             pwl = float(symbol_row['Prev_Week_Low']) if 'Prev_Week_Low' in symbol_row else float(symbol_row['PWL'])
 
             ticker = yf.Ticker(ticker_symbol)
@@ -267,4 +275,15 @@ def process_exact_bd_bu_lowest_low(input_file='filtered_stocks.csv', output_file
         except Exception as e:
             continue
 
-    # Save output
+    with pd.ExcelWriter(output_path, engine='openpyxl', mode='w') as writer:
+        pd.DataFrame(all_master_results).to_excel(writer, sheet_name='All_Stocks_Master', index=False)
+        pd.DataFrame(valid_results).to_excel(writer, sheet_name='Valid_Setups_Only', index=False)
+        pd.DataFrame(invalid_results).to_excel(writer, sheet_name='Invalid_Setups_Only', index=False)
+
+    # Format Excel output
+    apply_excel_styling(output_path)
+
+    print(f"\n✅ Server-Ready Fresh Week File Generated: '{output_path}'")
+
+if __name__ == "__main__":
+    process_exact_bd_bu_lowest_low()
