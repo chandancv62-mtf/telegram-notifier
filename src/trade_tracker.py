@@ -60,7 +60,8 @@ def apply_current_week_styling(ws):
     header_map = {str(ws.cell(row=1, column=c).value): c for c in range(1, ws.max_column + 1)}
 
     for row in range(1, ws.max_row + 1):
-        ws.row_dimensions[row].height = 22 if row == 1 else 18
+        is_total_row = (ws.cell(row=row, column=1).value == "TOTAL / OVERALL")
+        ws.row_dimensions[row].height = 24 if is_total_row else (22 if row == 1 else 18)
 
         for col in range(1, ws.max_column + 1):
             cell = ws.cell(row=row, column=col)
@@ -69,6 +70,9 @@ def apply_current_week_styling(ws):
             if row == 1:
                 cell.font = font_header
                 cell.fill = fill_header
+            elif is_total_row:
+                cell.font = Font(name='Calibri', size=11, bold=True, color='000000')
+                cell.fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
             else:
                 col_name_list = [k for k, v in header_map.items() if v == col]
                 if col_name_list:
@@ -272,7 +276,6 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 t1_exit = entry_price
                 t2_exit = 0.0
 
-            # Calculations for T1, T2, and Total Exit Value
             t1_value_total = round(t1_exit * no_stock, 2)
             t2_value_total = round(t2_exit * no_stock, 2) if t2_exit > 0 else 0.0
             total_exit_val = round(latest_exit_price * no_stock, 2)
@@ -331,6 +334,42 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     else:
         df_current = pd.DataFrame(columns=cols_order)
 
+    # Compute Totals for current week table
+    sum_pnl_pct = round(df_current['PnL_%'].sum(), 2) if not df_current.empty else 0.0
+
+    sum_pnl_t1_rs = 0.0
+    sum_pnl_t2_rs = 0.0
+
+    if not df_current.empty:
+        for val in df_current['PNL_T1']:
+            try:
+                # parse e.g. "+1.04% (+₹103.52)" or "-2.45% (₹-244.82)"
+                rs_part = str(val).split('(')[1].replace(')', '').replace('₹', '').replace('+', '').strip()
+                sum_pnl_t1_rs += float(rs_part)
+            except:
+                pass
+        for val in df_current['PNL_T2']:
+            try:
+                rs_part = str(val).split('(')[1].replace(')', '').replace('₹', '').replace('+', '').strip()
+                sum_pnl_t2_rs += float(rs_part)
+            except:
+                pass
+
+    sum_pnl_t1_rs = round(sum_pnl_t1_rs, 2)
+    sum_pnl_t2_rs = round(sum_pnl_t2_rs, 2)
+
+    total_amount_base = len(df_current) * 10000.0 if not df_current.empty else 10000.0
+    sum_pnl_t1_pct = round((sum_pnl_t1_rs / total_amount_base) * 100, 2) if total_amount_base > 0 else 0.0
+    sum_pnl_t2_pct = round((sum_pnl_t2_rs / total_amount_base) * 100, 2) if total_amount_base > 0 else 0.0
+
+    sign_t1_tot = "+" if sum_pnl_t1_rs >= 0 else ""
+    sign_t2_tot = "+" if sum_pnl_t2_rs >= 0 else ""
+    sign_pnl_pct = "+" if sum_pnl_pct >= 0 else ""
+
+    total_pnl_t1_str = f"{sign_t1_tot}{sum_pnl_t1_pct}% ({sign_t1_tot}₹{sum_pnl_t1_rs})"
+    total_pnl_t2_str = f"{sign_t2_tot}{sum_pnl_t2_pct}% ({sign_t2_tot}₹{sum_pnl_t2_rs})"
+    total_pnl_pct_str = f"{sign_pnl_pct}{sum_pnl_pct}%"
+
     df_history = pd.DataFrame()
 
     if not df_current.empty:
@@ -387,8 +426,25 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         df_current_out = df_current.drop(columns=['Week_Range'], errors='ignore')
         df_current_out.to_excel(writer, sheet_name='current_week', index=False)
-        apply_current_week_styling(writer.sheets['current_week'])
         
+        # Append Total row at the bottom of current_week sheet
+        ws_current = writer.sheets['current_week']
+        total_row_data = ['' for _ in range(len(df_current_out.columns))]
+        total_row_data[0] = "TOTAL / OVERALL"
+        
+        # Map columns to indices
+        col_map = {col_name: idx + 1 for idx, col_name in enumerate(df_current_out.columns)}
+        if 'PnL_%' in col_map:
+            total_row_data[col_map['PnL_%'] - 1] = total_pnl_pct_str
+        if 'PNL_T1' in col_map:
+            total_row_data[col_map['PNL_T1'] - 1] = total_pnl_t1_str
+        if 'PNL_T2' in col_map:
+            total_row_data[col_map['PNL_T2'] - 1] = total_pnl_t2_str
+            
+        ws_current.append(total_row_data)
+        apply_current_week_styling(ws_current)
+        
+        # Styles for history sheet
         ws_history = writer.book.create_sheet('history_data')
         
         active_cols_history = [c for c in cols_order if c != 'Week_Range']
@@ -564,7 +620,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY") and not str(cell.value or '').startswith("🏆 GRAND OVERALL"))
                 ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
-    print(f"\n✅ Tracking Complete & Excel Updated Successfully with T1_EXIT, T2_EXIT, TOTAL_EXIT_VALUE, all_taxes, PNL_T1, and PNL_T2!")
+    print(f"\n✅ Tracking Complete & Excel Updated Successfully with Total Summary Row for PnL_%, PNL_T1, and PNL_T2!")
 
 if __name__ == "__main__":
     track_trade_status()
