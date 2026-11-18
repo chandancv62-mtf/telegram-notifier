@@ -257,7 +257,6 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                                 t1_exit = latest_exit_price
                                 t2_exit = 0.0
 
-                        # PnL_% calculated strictly based on latest_exit_price
                         pnl_pct = round(((latest_exit_price - entry_price) / entry_price) * 100, 2)
 
                     else:
@@ -282,7 +281,10 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
             t1_value_total = round(t1_exit * no_stock, 2)
             t2_value_total = round(t2_exit * no_stock, 2) if t2_exit > 0 else 0.0
-            total_exit_val = round(latest_exit_price * no_stock, 2)
+            
+            # TOTAL_EXIT_VALUE based on the biggest value between T1_EXIT and T2_EXIT
+            max_exit_price = max(t1_exit, t2_exit)
+            total_exit_val = round(max_exit_price * no_stock, 2)
 
             taxes_t1 = calculate_swing_taxes(invest, t1_value_total)
             taxes_t2 = calculate_swing_taxes(invest, t2_value_total) if t2_exit > 0 else 0.0
@@ -631,7 +633,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY") and not str(cell.value or '').startswith("🏆 GRAND OVERALL"))
                 ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
-    print(f"\n✅ Tracking Complete & Excel Updated Successfully with PnL_% based on Latest Exit Price and Totals Row!")
+    print(f"\n✅ Tracking Complete & Excel Updated Successfully with TOTAL_EXIT_VALUE based on max(T1_EXIT, T2_EXIT)!")
 
 if __name__ == "__main__":
     track_trade_status()
