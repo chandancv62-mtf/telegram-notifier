@@ -281,7 +281,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
             max_exit_price = max(t1_exit, t2_exit)
             total_exit_val = round(max_exit_price * no_stock, 2)
 
-            # PnL_% formula: ((TOTAL_EXIT_VALUE - INVEST) * 100) / INVEST
+            # PnL_% formula: ((TOTAL_EXIT_VALUE - INVEST) * 100) / INVEST (stored as float)
             pnl_pct = round(((total_exit_val - invest) * 100) / invest, 2) if invest > 0 else 0.0
 
             taxes_t1 = calculate_swing_taxes(invest, t1_value_total)
@@ -296,11 +296,9 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
             sign_t1 = "+" if net_pnl_t1 >= 0 else ""
             sign_t2 = "+" if net_pnl_t2 >= 0 else ""
-            sign_pnl = "+" if pnl_pct >= 0 else ""
 
             pnl_t1_str = f"{sign_t1}{pnl_t1_pct}% ({sign_t1}₹{net_pnl_t1})"
             pnl_t2_str = f"{sign_t2}{pnl_t2_pct}% ({sign_t2}₹{net_pnl_t2})"
-            pnl_pct_str = f"{sign_pnl}{pnl_pct}%"
 
             wk_range = get_week_range_str(entry_triggered_time if entry_triggered_time != "N/A" else current_week_str)
 
@@ -317,7 +315,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 'Exit_Time': exit_time,
                 'T1_EXIT': t1_exit,
                 'T2_EXIT': t2_exit,
-                'PnL_%': pnl_pct_str,
+                'PnL_%': pnl_pct,  # Pure float stored for Telegram bot compatibility
                 'Amount': amount,
                 'no_stock': no_stock,
                 'Invest': invest,
@@ -341,15 +339,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         df_current = pd.DataFrame(columns=cols_order)
 
     # Compute Totals for current week table
-    sum_pnl_pct = 0.0
-    if not df_current.empty:
-        for val in df_current['PnL_%']:
-            try:
-                cleaned = str(val).split('%')[0].replace('+', '').strip()
-                sum_pnl_pct += float(cleaned)
-            except:
-                pass
-    sum_pnl_pct = round(sum_pnl_pct, 2)
+    sum_pnl_pct = round(df_current['PnL_%'].sum(), 2) if not df_current.empty else 0.0
 
     sum_pnl_t1_rs = 0.0
     sum_pnl_t2_rs = 0.0
@@ -525,8 +515,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                     st = str(r_data.get('Trade_Status', '')).upper()
                     pnl_val = 0.0
                     try:
-                        v_s = str(r_data.get('PnL_%', 0)).split('%')[0].replace('+', '').strip()
-                        pnl_val = float(v_s)
+                        pnl_val = float(r_data.get('PnL_%', 0))
                     except:
                         pass
 
@@ -631,7 +620,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY") and not str(cell.value or '').startswith("🏆 GRAND OVERALL"))
                 ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
-    print(f"\n✅ Tracking Complete & Excel Updated Successfully with Correct PnL% Formula and Totals!")
+    print(f"\n✅ Tracking Complete & Excel Updated Successfully with Float PnL_%!")
 
 if __name__ == "__main__":
     track_trade_status()
