@@ -257,6 +257,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                                 t1_exit = latest_exit_price
                                 t2_exit = 0.0
 
+                        # PnL_% calculated strictly based on latest_exit_price
                         pnl_pct = round(((latest_exit_price - entry_price) / entry_price) * 100, 2)
 
                     else:
@@ -264,17 +265,20 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                         t1_exit = entry_price
                         t2_exit = 0.0
                         latest_exit_price = entry_price  
+                        pnl_pct = 0.0
 
             except Exception as e:
                 trade_status = f"ERROR: {str(e)}"
                 t1_exit = entry_price
                 t2_exit = 0.0
                 latest_exit_price = entry_price
+                pnl_pct = 0.0
 
             if latest_exit_price == 0.0:
                 latest_exit_price = entry_price
                 t1_exit = entry_price
                 t2_exit = 0.0
+                pnl_pct = 0.0
 
             t1_value_total = round(t1_exit * no_stock, 2)
             t2_value_total = round(t2_exit * no_stock, 2) if t2_exit > 0 else 0.0
@@ -292,9 +296,11 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
 
             sign_t1 = "+" if net_pnl_t1 >= 0 else ""
             sign_t2 = "+" if net_pnl_t2 >= 0 else ""
+            sign_pnl = "+" if pnl_pct >= 0 else ""
 
             pnl_t1_str = f"{sign_t1}{pnl_t1_pct}% ({sign_t1}₹{net_pnl_t1})"
             pnl_t2_str = f"{sign_t2}{pnl_t2_pct}% ({sign_t2}₹{net_pnl_t2})"
+            pnl_pct_str = f"{sign_pnl}{pnl_pct}%"
 
             wk_range = get_week_range_str(entry_triggered_time if entry_triggered_time != "N/A" else current_week_str)
 
@@ -311,7 +317,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 'Exit_Time': exit_time,
                 'T1_EXIT': t1_exit,
                 'T2_EXIT': t2_exit,
-                'PnL_%': pnl_pct,
+                'PnL_%': pnl_pct_str,
                 'Amount': amount,
                 'no_stock': no_stock,
                 'Invest': invest,
@@ -335,7 +341,15 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         df_current = pd.DataFrame(columns=cols_order)
 
     # Compute Totals for current week table
-    sum_pnl_pct = round(df_current['PnL_%'].sum(), 2) if not df_current.empty else 0.0
+    sum_pnl_pct = 0.0
+    if not df_current.empty:
+        for val in df_current['PnL_%']:
+            try:
+                cleaned = str(val).split('%')[0].replace('+', '').strip()
+                sum_pnl_pct += float(cleaned)
+            except:
+                pass
+    sum_pnl_pct = round(sum_pnl_pct, 2)
 
     sum_pnl_t1_rs = 0.0
     sum_pnl_t2_rs = 0.0
@@ -343,7 +357,6 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
     if not df_current.empty:
         for val in df_current['PNL_T1']:
             try:
-                # parse e.g. "+1.04% (+₹103.52)" or "-2.45% (₹-244.82)"
                 rs_part = str(val).split('(')[1].replace(')', '').replace('₹', '').replace('+', '').strip()
                 sum_pnl_t1_rs += float(rs_part)
             except:
@@ -427,12 +440,10 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         df_current_out = df_current.drop(columns=['Week_Range'], errors='ignore')
         df_current_out.to_excel(writer, sheet_name='current_week', index=False)
         
-        # Append Total row at the bottom of current_week sheet
         ws_current = writer.sheets['current_week']
         total_row_data = ['' for _ in range(len(df_current_out.columns))]
         total_row_data[0] = "TOTAL / OVERALL"
         
-        # Map columns to indices
         col_map = {col_name: idx + 1 for idx, col_name in enumerate(df_current_out.columns)}
         if 'PnL_%' in col_map:
             total_row_data[col_map['PnL_%'] - 1] = total_pnl_pct_str
@@ -444,7 +455,6 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
         ws_current.append(total_row_data)
         apply_current_week_styling(ws_current)
         
-        # Styles for history sheet
         ws_history = writer.book.create_sheet('history_data')
         
         active_cols_history = [c for c in cols_order if c != 'Week_Range']
@@ -515,7 +525,8 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                     st = str(r_data.get('Trade_Status', '')).upper()
                     pnl_val = 0.0
                     try:
-                        pnl_val = float(r_data.get('PnL_%', 0))
+                        v_s = str(r_data.get('PnL_%', 0)).split('%')[0].replace('+', '').strip()
+                        pnl_val = float(v_s)
                     except:
                         pass
 
@@ -620,7 +631,7 @@ def track_trade_status(input_file='weekly_final_trading_signals.xlsx', output_fi
                 max_len = max(len(str(cell.value or '')) for cell in col if not str(cell.value or '').startswith("Week Range:") and not str(cell.value or '').startswith("📊 WEEKLY SUMMARY") and not str(cell.value or '').startswith("🏆 GRAND OVERALL"))
                 ws_history.column_dimensions[col_letter].width = max(max_len + 2, 8)
 
-    print(f"\n✅ Tracking Complete & Excel Updated Successfully with Total Summary Row for PnL_%, PNL_T1, and PNL_T2!")
+    print(f"\n✅ Tracking Complete & Excel Updated Successfully with PnL_% based on Latest Exit Price and Totals Row!")
 
 if __name__ == "__main__":
     track_trade_status()
