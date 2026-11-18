@@ -117,4 +117,3 @@ def run_scanner(input_file='data/stocks.csv', output_file='data/filtered_stocks.
 
 if __name__ == "__main__":
     run_scanner()
-```[cite: 2]
