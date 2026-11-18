@@ -59,7 +59,11 @@ def run_scanner(input_file='data/stocks.csv', output_file='data/filtered_stocks.
             daily_low = latest_daily['Low']
             daily_close = latest_daily['Close']
 
-            # Condition: Low broke Previous Week's Low, but Close is ABOVE it
+            # Condition 1: Price Range Filter (Min ₹100 and Max ₹5000)
+            if not (100 <= daily_close <= 5000):
+                continue
+
+            # Condition 2: Low broke Previous Week's Low, but Close is ABOVE it
             if daily_low < prev_week_low and daily_close > prev_week_low:
                 filtered_results.append({
                     'Ticker': symbol,
@@ -68,7 +72,7 @@ def run_scanner(input_file='data/stocks.csv', output_file='data/filtered_stocks.
                     'Daily_Close': round(daily_close, 2),
                     'Prev_Week_Low': round(prev_week_low, 2)
                 })
-                tqdm.write(f" -> [MATCH] {symbol} | Low: {round(daily_low, 2)} < PWL: {round(prev_week_low, 2)} | Close: {round(daily_close, 2)} > PWL")
+                tqdm.write(f" -> [MATCH] {symbol} | Price: ₹{round(daily_close, 2)} | Low: {round(daily_low, 2)} < PWL: {round(prev_week_low, 2)} | Close > PWL")
 
         except Exception as e:
             tqdm.write(f"Error scanning {symbol}: {e}")
@@ -109,7 +113,8 @@ def run_scanner(input_file='data/stocks.csv', output_file='data/filtered_stocks.
         df_weekly_only.to_csv(output_path, index=False)
         print(f"\nScan completed! {len(df_weekly_only)} stock(s) from current week saved in '{output_path}'.")
     else:
-        print("\nScan completed! No new stocks met the condition today.")
+        print("\nScan completed! No new stocks met the conditions today.")
 
 if __name__ == "__main__":
     run_scanner()
+```[cite: 2]
