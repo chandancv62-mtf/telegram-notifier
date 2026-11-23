@@ -1,191 +1,229 @@
 import os
+import re
 import requests
 import pandas as pd
 from datetime import datetime
 
+
 def send_telegram_message(bot_token, chat_id, text):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+    }
     res = requests.post(url, data=payload)
     if res.status_code != 200:
         print(f"Failed to send Telegram Alert: {res.text}")
 
+
 def get_valid_filepath(filename):
-    """Check data/ directory first, then root directory"""
+    """Check data/ directory first, then root directory."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    
-    path_data = os.path.join(project_root, "data", os.path.basename(filename))
-    path_root = os.path.join(project_root, os.path.basename(filename))
-    path_script_data = os.path.join(script_dir, "data", os.path.basename(filename))
-    
-    if os.path.exists(path_data):
-        return path_data
-    elif os.path.exists(path_root):
-        return path_root
-    elif os.path.exists(path_script_data):
-        return path_script_data
-    return path_data
 
-def send_telegram_summary(tracker_file='trade_tracker_results.xlsx', next_day_file='weekly_final_trading_signals.xlsx'):
+    candidates = [
+        os.path.join(project_root, "data", os.path.basename(filename)),
+        os.path.join(project_root, os.path.basename(filename)),
+        os.path.join(script_dir, "data", os.path.basename(filename)),
+        os.path.join(script_dir, os.path.basename(filename)),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
+
+
+def parse_pct(val):
+    """Safely extract numeric percentage from strings like '+1.52%', '-7.89%', '+0.18% (+₹17.61)'."""
+    if pd.isna(val):
+        return 0.0
+    s = str(val).strip()
+    if s in ["", "nan", "NaN", "None", "N/A"]:
+        return 0.0
+    m = re.search(r"([+-]?\d+(?:\.\d+)?)\s*%", s)
+    if m:
+        return float(m.group(1))
+    cleaned = s.replace("%", "").replace("+", "").strip()
+    try:
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+
+def format_target_label(status_str):
+    st = str(status_str).strip()
+    st_upper = st.upper()
+    if "1:2" in st_upper:
+        return "Target T1, T2 hit"
+    if "1:1" in st_upper:
+        return "Target T1 hit"
+    return st
+
+
+def send_telegram_summary(
+    tracker_file="trade_tracker_results.xlsx",
+    next_day_file="weekly_final_trading_signals.xlsx",
+):
     tracker_path = get_valid_filepath(tracker_file)
     next_day_path = get_valid_filepath(next_day_file)
-    
+
     bot_token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_TO")
-    
+
     if not bot_token or not chat_id:
         print("❌ Telegram Credentials missing in environment variables.")
         return
 
-    # MESSAGE 1: TRADE EXECUTION SUMMARY (Excluding Waiting List)
+    now_dt = datetime.now()
+    today_str = now_dt.strftime("%Y-%m-%d")
+
     try:
-        if os.path.exists(tracker_path):
-            df_curr = pd.read_excel(tracker_path, sheet_name='current_week').dropna(how='all')
-            
-            if not df_curr.empty:
-                # Exclude 'WAIT (No Entry)' from tracker summary
-                df_executed = df_curr[df_curr['Trade_Status'].astype(str) != 'WAIT (No Entry)'].copy()
-                
-                targets_df = df_executed[df_executed['Trade_Status'].astype(str).str.contains('TARGET', case=False, na=False)]
-                sl_df = df_executed[df_executed['Trade_Status'].astype(str).str.contains('SL HIT', case=False, na=False)]
-                active_df = df_executed[df_executed['Trade_Status'].astype(str) == 'ACTIVE']
-                other_df = df_executed[~df_executed.index.isin(targets_df.index.union(sl_df.index).union(active_df.index))]
+        if not os.path.exists(tracker_path):
+            send_telegram_message(bot_token, chat_id, "Trade tracker file nahi mili.")
+            return
 
-                total_monitored = len(df_curr)  # Total all-inclusive count if needed, or len(df_executed)
-                cnt_target = len(targets_df)
-                cnt_sl = len(sl_df)
-                cnt_active = len(active_df)
+        df_curr = pd.read_excel(tracker_path, sheet_name="current_week").dropna(how="all")
 
-                # PnL Calculations
-                df_executed['PnL_%'] = pd.to_numeric(df_executed['PnL_%'], errors='coerce').fillna(0)
-                total_week_pnl = df_executed['PnL_%'].sum()
-                
-                today_str = datetime.now().strftime('%Y-%m-%d')
-                df_today = df_executed[df_executed['Exit_Time'].astype(str).str.contains(today_str, na=False) | df_executed['Entry_Triggered_Time'].astype(str).str.contains(today_str, na=False)]
-                daily_pnl = df_today['PnL_%'].sum() if not df_today.empty else 0.0
+        ticker_str = df_curr["Ticker"].astype(str).str.strip()
+        is_summary_row = (
+            ticker_str.str.upper().str.startswith("TOTAL")
+            | ticker_str.str.contains(
+                "WEEKLY SUMMARY|GRAND OVERALL SUMMARY|Week Range",
+                case=False,
+                na=False,
+            )
+        )
+        df_monitored = df_curr[~is_summary_row].copy()
 
-                daily_pnl_str = f"+{daily_pnl:.2f}%" if daily_pnl >= 0 else f"{daily_pnl:.2f}%"
-                week_pnl_str = f"+{total_week_pnl:.2f}%" if total_week_pnl >= 0 else f"{total_week_pnl:.2f}%"
+        if df_monitored.empty:
+            send_telegram_message(bot_token, chat_id, "Aaj ke liye koi monitored trade nahi hai.")
+            return
 
-                # Header Banner
-                msg = "📊 *TRADING PERFORMANCE SUMMARY*\n"
-                msg += "──────────────────────────────\n"
-                msg += f"📈 *Total Monitored:* `{len(df_curr)}`\n"
-                msg += f"🎯 *Target Hit:* `{cnt_target}`  |  🔴 *SL Hit:* `{cnt_sl}`\n"
-                msg += f"🟢 *Active:* `{cnt_active}`\n"
-                msg += f"📅 *Today's PnL:* `{daily_pnl_str}` ⚡\n"
-                msg += f"💰 *Total Week PnL:* `{week_pnl_str}` 🚀\n"
-                msg += "──────────────────────────────\n\n"
+        df_executed = df_monitored[
+            df_monitored["Trade_Status"].astype(str).str.strip() != "WAIT (No Entry)"
+        ].copy()
 
-                def build_category_msg(df_subset, category_title, icon):
-                    if df_subset.empty:
-                        return ""
-                    section_text = f"{icon} *{category_title}*\n"
-                    for _, row in df_subset.iterrows():
-                        ticker = row['Ticker']
-                        status = str(row['Trade_Status'])
-                        entry = row['ENTRY']
-                        sl = row['SL']
-                        t2 = row['TARGET_1:2']
-                        trig_time = str(row['Entry_Triggered_Time'])
-                        exit_time = str(row['Exit_Time'])
-                        pnl = float(row['PnL_%'] or 0)
-                        
-                        pnl_display = f"🟢 `+{pnl}%`" if pnl > 0 else (f"🔴 `{pnl}%`" if pnl < 0 else f"`{pnl}%`")
-                        
-                        # Highlight today's hits using emojis and bold text since telegram doesn't support font color tags
-                        is_today = today_str in trig_time or today_str in exit_time
-                        
-                        if is_today and "TARGET" in status:
-                            status_highlight = f"🟩🔥 *{status} (TODAY'S HIT)* 🔥🟩"
-                        elif is_today and "SL" in status:
-                            status_highlight = f"🟥🔥 *{status} (TODAY'S HIT)* 🔥🟥"
-                        elif "TARGET" in status:
-                            status_highlight = f"🌟 *{status}* 🌟"
-                        elif "SL" in status:
-                            status_highlight = f"⚠️ *{status}* ⚠️"
-                        else:
-                            status_highlight = f"`{status}`"
+        df_executed["pnl_num"] = df_executed["PnL_%"].apply(parse_pct)
+        df_executed["t1_pct"] = (
+            df_executed["PNL_T1"].apply(parse_pct)
+            if "PNL_T1" in df_executed.columns
+            else 0.0
+        )
+        df_executed["t2_pct"] = (
+            df_executed["PNL_T2"].apply(parse_pct)
+            if "PNL_T2" in df_executed.columns
+            else 0.0
+        )
 
-                        section_text += f"▪️ *{ticker}* ⟾ {status_highlight}\n"
-                        section_text += f"   ├ *Entry:* ₹{entry} │ *SL:* ₹{sl}\n"
-                        section_text += f"   ├ *Target (1:2):* ₹{t2} │ *PnL:* {pnl_display}\n"
-                        
-                        if trig_time not in ["nan", "N/A", "None", ""]:
-                            section_text += f"   ├ *Entry Date/Time:* `{trig_time}`\n"
-                        
-                        if exit_time not in ["nan", "N/A", "None", ""]:
-                            section_text += f"   └ *Exit Date/Time:* `{exit_time}`\n"
-                        else:
-                            section_text += f"   └ *Exit Date/Time:* `Running / Active`\n"
-                        section_text += "\n"
-                    return section_text
+        status_s = df_executed["Trade_Status"].astype(str).str.strip()
+        t1_hit_df = df_executed[status_s.str.contains("1:1", case=False, na=False)]
+        t2_hit_df = df_executed[status_s.str.contains("1:2", case=False, na=False)]
+        sl_hit_df = df_executed[status_s.str.upper() == "SL HIT"]
+        active_df = df_executed[status_s.str.upper() == "ACTIVE"]
 
-                sections = [
-                    build_category_msg(targets_df, "TARGET HIT STOCKS:", "🎯"),
-                    build_category_msg(sl_df, "SL HIT STOCKS:", "🔴"),
-                    build_category_msg(active_df, "ACTIVE TRADES:", "🟢"),
-                    build_category_msg(other_df, "OTHER STATUS:", "📌")
-                ]
+        total_monitored = len(df_monitored)
+        cnt_t1 = len(t1_hit_df)
+        cnt_t2 = len(t2_hit_df)
+        cnt_sl = len(sl_hit_df)
+        cnt_active = len(active_df)
 
-                for sec in sections:
-                    if sec:
-                        if len(msg + sec) > 3800:
-                            send_telegram_message(bot_token, chat_id, msg)
-                            msg = "📌 *TRADING SUMMARY (Contd.)*\n\n"
-                        msg += sec
+        today_mask = (
+            df_executed["Exit_Time"].astype(str).str.contains(today_str, na=False)
+            | df_executed["Entry_Triggered_Time"].astype(str).str.contains(today_str, na=False)
+        )
+        today_df = df_executed[today_mask]
 
-                send_telegram_message(bot_token, chat_id, msg)
-            else:
-                send_telegram_message(bot_token, chat_id, "📌 *TRADING SUMMARY*\n──────────────────────────────\n\nAaj ke liye koi executed trade nahi hai.")
+        todays_pnl_t1 = float(today_df["t1_pct"].sum()) if not today_df.empty else 0.0
+        todays_pnl_t2 = float(today_df["t2_pct"].sum()) if not today_df.empty else 0.0
+        overall_day_pnl = float(today_df["pnl_num"].sum()) if not today_df.empty else 0.0
+        weekly_pnl = float(df_executed["pnl_num"].sum())
+
+        msg = (
+            f"*Total Monitored:* `{total_monitored}`\n"
+            f"*Target Hit T1:* `{cnt_t1}` | *T2:* `{cnt_t2}`\n"
+            f"*SL Hit:* `{cnt_sl}` | *Active:* `{cnt_active}`\n"
+            f"*Today's PnL T1:* `{todays_pnl_t1:+.2f}%` | *T2:* `{todays_pnl_t2:+.2f}%`\n"
+            f"*Overall Day PnL:* `{overall_day_pnl:+.2f}%`\n"
+            f"*Weekly PnL:* `{weekly_pnl:+.2f}%`\n"
+            f"──────────────────────────\n"
+            f"*TARGET TODAY STOCKS*\n"
+        )
+
+        target_today_df = df_executed[
+            status_s.str.contains("TARGET", case=False, na=False)
+            & df_executed["Exit_Time"].astype(str).str.contains(today_str, na=False)
+        ]
+
+        if target_today_df.empty:
+            msg += "_Aaj koi Target hit nahi hua._\n"
         else:
-            send_telegram_message(bot_token, chat_id, "📌 *TRADING SUMMARY*\n──────────────────────────────\n\nTrade tracker file mil nahi rahi hai.")
+            for _, r in target_today_df.iterrows():
+                target_lbl = format_target_label(r["Trade_Status"])
+                pnl_val = float(r["pnl_num"])
+                t1_val = r.get("TARGET_1:1", "-")
+                t2_val = r.get("TARGET_1:2", "-")
+                entry_dt = str(r.get("Entry_Triggered_Time", "-")).strip()
+                exit_dt = str(r.get("Exit_Time", "-")).strip()
+                msg += (
+                    f"\n*{r['Ticker']}* — `{target_lbl}`\n"
+                    f"*Entry:* `₹{r['ENTRY']}` | *SL:* `₹{r['SL']}` | *PnL:* `{pnl_val:+.2f}%`\n"
+                    f"*Target T1(`₹{t1_val}`) | T2(`₹{t2_val}`)*\n"
+                    f"*Entry Date/Time:* `{entry_dt}`\n"
+                    f"*Exit Date/Time:* `{exit_dt}`\n"
+                )
+
+        msg += "\n*ACTIVE STOCKS*\n"
+        if active_df.empty:
+            msg += "_Koi active stock nahi hai._\n"
+        else:
+            for _, r in active_df.iterrows():
+                pnl_val = float(r["pnl_num"])
+                t1_val = r.get("TARGET_1:1", "-")
+                t2_val = r.get("TARGET_1:2", "-")
+                entry_dt = str(r.get("Entry_Triggered_Time", "-")).strip()
+                status_dt = str(r.get("Exit_Time", "")).strip() or "Active"
+                msg += (
+                    f"\n*{r['Ticker']}* — `Active`\n"
+                    f"*Entry:* `₹{r['ENTRY']}` | *SL:* `₹{r['SL']}` | *PnL:* `{pnl_val:+.2f}%`\n"
+                    f"*Target T1(`₹{t1_val}`) | T2(`₹{t2_val}`)*\n"
+                    f"*Entry Date/Time:* `{entry_dt}`\n"
+                    f"*Status/Time:* `{status_dt}`\n"
+                )
+
+        msg += "\n──────────────────────────\n*NEXT DAY WATCHLIST*\n"
+        executed_tickers = set(df_executed["Ticker"].dropna().astype(str).str.strip().tolist())
+        if os.path.exists(next_day_path):
+            try:
+                df_next = pd.read_excel(next_day_path, sheet_name="Valid_Setups_Only").dropna(how="all")
+                if not df_next.empty and executed_tickers:
+                    df_next = df_next[~df_next["Ticker"].astype(str).str.strip().isin(executed_tickers)]
+                if df_next.empty:
+                    msg += "_Agle din ke liye koi naya pending setup nahi mila._\n"
+                else:
+                    for _, row in df_next.iterrows():
+                        t1_val = row.get("TARGET_1:1", "-")
+                        t2_val = row.get("TARGET_1:2", "-")
+                        msg += (
+                            f"\n• *{row['Ticker']}*\n"
+                            f"  *Entry:* `₹{row['ENTRY']}` | *SL:* `₹{row['SL']}`\n"
+                            f"  *Target T1(`₹{t1_val}`) | T2(`₹{t2_val}`)*\n"
+                        )
+            except Exception:
+                msg += "_Watchlist file read karne mein dikkat aayi._\n"
+        else:
+            msg += "_Agle din ke liye koi naya pending setup nahi mila._\n"
+
+        if len(msg) > 3800:
+            send_telegram_message(bot_token, chat_id, msg[:3800])
+            send_telegram_message(bot_token, chat_id, msg[3800:])
+        else:
+            send_telegram_message(bot_token, chat_id, msg.strip())
+
     except Exception as e:
         send_telegram_message(bot_token, chat_id, f"⚠️ Trade tracker read error: {e}")
 
-    # MESSAGE 2: NEXT DAY WATCHLIST (Pending Signals Only)
-    try:
-        executed_tickers = set()
-        if os.path.exists(tracker_path):
-            try:
-                df_curr_chk = pd.read_excel(tracker_path, sheet_name='current_week').dropna(how='all')
-                if not df_curr_chk.empty:
-                    triggered_df = df_curr_chk[df_curr_chk['Trade_Status'].astype(str) != 'WAIT (No Entry)']
-                    executed_tickers = set(triggered_df['Ticker'].tolist())
-            except Exception as e:
-                print(f"Warning reading tracker for filtering next day list: {e}")
-
-        if os.path.exists(next_day_path):
-            df_next = pd.read_excel(next_day_path, sheet_name='Valid_Setups_Only').dropna(how='all')
-            
-            if not df_next.empty and executed_tickers:
-                df_next = df_next[~df_next['Ticker'].isin(executed_tickers)]
-
-            msg_next = "📋 *NEXT DAY WATCHLIST (Pending Signals)*\n"
-            msg_next += "──────────────────────────────\n\n"
-            
-            if df_next.empty:
-                msg_next += "Agle din ke liye koi naya pending setup nahi mila."
-                send_telegram_message(bot_token, chat_id, msg_next)
-            else:
-                for _, row in df_next.iterrows():
-                    item_msg = f"🔹 *{row['Ticker']}*\n"
-                    item_msg += f"   • Entry Trigger Above: ₹{row['ENTRY']}\n"
-                    item_msg += f"   • Stop Loss: ₹{row['SL']}\n"
-                    item_msg += f"   • Targets: T1 ₹{row['TARGET_1:1']} | T2 ₹{row['TARGET_1:2']}\n\n"
-
-                    if len(msg_next + item_msg) > 3800:
-                        send_telegram_message(bot_token, chat_id, msg_next)
-                        msg_next = "📋 *NEXT DAY WATCHLIST (Contd.)*\n\n"
-
-                    msg_next += item_msg
-
-                send_telegram_message(bot_token, chat_id, msg_next)
-        else:
-            send_telegram_message(bot_token, chat_id, "📋 *NEXT DAY WATCHLIST*\n──────────────────────────────\n\nAaj kal ke liye koi naya setup nahi mila.")
-    except Exception as e:
-        send_telegram_message(bot_token, chat_id, f"⚠️ Next day signals read error: {e}")
 
 if __name__ == "__main__":
     send_telegram_summary()
